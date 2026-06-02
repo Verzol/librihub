@@ -58,6 +58,16 @@ def get_public_user_summary(db: Session, user_id: int) -> User:
     return user
 
 
+def list_user_notifications(db: Session, current_user: User, limit: int = 100) -> list[ActivityLog]:
+    statement = (
+        select(ActivityLog)
+        .where(ActivityLog.user_id == current_user.user_id)
+        .order_by(ActivityLog.created_at.desc(), ActivityLog.activity_id.desc())
+        .limit(limit)
+    )
+    return list(db.scalars(statement))
+
+
 def register_member(db: Session, payload: RegisterRequest) -> tuple[User, str]:
     existing = db.scalar(
         select(User.user_id).where(or_(User.email == payload.email, User.phone == payload.phone))

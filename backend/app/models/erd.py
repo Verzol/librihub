@@ -339,6 +339,26 @@ class Transaction(Base):
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    book: Mapped[Book] = relationship()
+    owner: Mapped[User] = relationship(foreign_keys=[owner_id])
+    requester: Mapped[User] = relationship(foreign_keys=[requester_id])
+
+    @property
+    def book_title(self) -> str | None:
+        return self.book.title if self.book else None
+
+    @property
+    def book_author(self) -> str | None:
+        return self.book.author if self.book else None
+
+    @property
+    def owner_full_name(self) -> str | None:
+        return self.owner.full_name if self.owner else None
+
+    @property
+    def requester_full_name(self) -> str | None:
+        return self.requester.full_name if self.requester else None
+
     __table_args__ = (
         CheckConstraint("owner_id <> requester_id", name="ck_TRANSACTION_owner_not_requester"),
         CheckConstraint(
@@ -458,6 +478,26 @@ class Review(Base):
         nullable=False,
         server_default=func.now(),
     )
+
+    transaction: Mapped[Transaction] = relationship()
+    reviewer: Mapped[User] = relationship(foreign_keys=[reviewer_user_id])
+    reviewee: Mapped[User] = relationship(foreign_keys=[reviewee_user_id])
+
+    @property
+    def reviewer_full_name(self) -> str | None:
+        return self.reviewer.full_name if self.reviewer else None
+
+    @property
+    def reviewee_full_name(self) -> str | None:
+        return self.reviewee.full_name if self.reviewee else None
+
+    @property
+    def book_title(self) -> str | None:
+        return self.transaction.book_title if self.transaction else None
+
+    @property
+    def book_author(self) -> str | None:
+        return self.transaction.book_author if self.transaction else None
 
     __table_args__ = (
         CheckConstraint("rating_score BETWEEN 1 AND 5", name="ck_REVIEW_rating_score_range"),

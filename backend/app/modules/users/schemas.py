@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.models.enums import AccountStatus, CourierStatus, MembershipStatus, UserRole
+from app.models.enums import AccountStatus, ActivityType, CourierStatus, MembershipStatus, UserRole
 
 
 class TokenResponse(BaseModel):
@@ -144,6 +144,15 @@ class PublicUserSummaryResponse(BaseModel):
     membership_status: MembershipStatus | None = None
     courier_status: CourierStatus | None = None
     joined_at: datetime
+
+
+class UserNotificationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    activity_id: int
+    activity_type: ActivityType
+    activity_description: str
+    created_at: datetime
 
 
 class RegisterResponse(BaseModel):

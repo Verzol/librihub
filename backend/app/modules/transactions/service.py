@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.delivery_area import is_within_free_courier_area
 from app.models.enums import (
@@ -56,7 +56,15 @@ def list_my_transactions(
     *,
     role: str | None = None,
 ) -> list[Transaction]:
-    statement = select(Transaction).order_by(Transaction.requested_at.desc())
+    statement = (
+        select(Transaction)
+        .options(
+            selectinload(Transaction.book),
+            selectinload(Transaction.owner),
+            selectinload(Transaction.requester),
+        )
+        .order_by(Transaction.requested_at.desc())
+    )
     if role == "owner":
         statement = statement.where(Transaction.owner_id == current_user.user_id)
     elif role == "requester":

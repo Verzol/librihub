@@ -1,6 +1,6 @@
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.models.enums import ActivityType, ReviewType, TransactionStatus
 from app.models.erd import ActivityLog, CourierProfile, Delivery, Review, Transaction, User
@@ -72,8 +72,27 @@ def create_review(db: Session, current_user: User, payload: ReviewCreateRequest)
 def list_reviews_for_user(db: Session, user_id: int) -> list[Review]:
     statement = (
         select(Review)
+        .options(
+            selectinload(Review.reviewer),
+            selectinload(Review.reviewee),
+            selectinload(Review.transaction).selectinload(Transaction.book),
+        )
         .where(Review.reviewee_user_id == user_id)
         .order_by(Review.created_at.desc(), Review.review_id.desc())
+    )
+    return list(db.scalars(statement))
+
+
+def list_recent_reviews(db: Session, limit: int = 100) -> list[Review]:
+    statement = (
+        select(Review)
+        .options(
+            selectinload(Review.reviewer),
+            selectinload(Review.reviewee),
+            selectinload(Review.transaction).selectinload(Transaction.book),
+        )
+        .order_by(Review.created_at.desc(), Review.review_id.desc())
+        .limit(limit)
     )
     return list(db.scalars(statement))
 
@@ -81,6 +100,11 @@ def list_reviews_for_user(db: Session, user_id: int) -> list[Review]:
 def list_reviews_for_book(db: Session, book_id: int) -> list[Review]:
     statement = (
         select(Review)
+        .options(
+            selectinload(Review.reviewer),
+            selectinload(Review.reviewee),
+            selectinload(Review.transaction).selectinload(Transaction.book),
+        )
         .join(Transaction, Transaction.transaction_id == Review.transaction_id)
         .where(Transaction.book_id == book_id)
         .order_by(Review.created_at.desc(), Review.review_id.desc())

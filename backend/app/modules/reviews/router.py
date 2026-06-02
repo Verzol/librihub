@@ -7,6 +7,7 @@ from app.modules.reviews.service import (
     ForbiddenReviewError,
     TransactionNotReviewableError,
     create_review,
+    list_recent_reviews,
     list_reviews_for_book,
     list_reviews_for_user,
 )
@@ -43,6 +44,11 @@ def add_review(
             detail="A matching review already exists.",
         ) from None
     return ReviewResponse.model_validate(review)
+
+
+@router.get("/reviews", response_model=list[ReviewResponse], tags=["reviews"])
+def read_recent_reviews(db: DbSession, current_user: CurrentUser) -> list[ReviewResponse]:
+    return [ReviewResponse.model_validate(review) for review in list_recent_reviews(db)]
 
 
 @router.get("/users/{user_id}/reviews", response_model=list[ReviewResponse], tags=["reviews"])

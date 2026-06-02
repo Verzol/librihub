@@ -52,8 +52,12 @@ class TransactionResponse(BaseModel):
 
     transaction_id: int
     book_id: int
+    book_title: str | None = None
+    book_author: str | None = None
     owner_id: int
+    owner_full_name: str | None = None
     requester_id: int
+    requester_full_name: str | None = None
     transaction_type: TransactionType
     delivery_method: DeliveryMethod
     transaction_status: TransactionStatus
