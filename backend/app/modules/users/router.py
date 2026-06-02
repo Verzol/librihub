@@ -9,6 +9,7 @@ from app.modules.users.schemas import (
     RegisterRequest,
     RegisterResponse,
     TokenResponse,
+    UserNotificationResponse,
     UserResponse,
 )
 from app.modules.users.service import (
@@ -19,6 +20,7 @@ from app.modules.users.service import (
     UserNotFoundError,
     authenticate_user,
     get_public_user_summary,
+    list_user_notifications,
     register_courier_profile,
     register_member,
     update_member_profile,
@@ -67,6 +69,14 @@ def login(payload: LoginRequest, db: DbSession) -> TokenResponse:
 @router.get("/users/me", response_model=UserResponse, tags=["users"])
 def read_current_user(current_user: CurrentUser) -> UserResponse:
     return UserResponse.model_validate(current_user)
+
+
+@router.get("/users/me/notifications", response_model=list[UserNotificationResponse], tags=["users"])
+def read_my_notifications(db: DbSession, current_user: CurrentUser) -> list[UserNotificationResponse]:
+    return [
+        UserNotificationResponse.model_validate(notification)
+        for notification in list_user_notifications(db, current_user)
+    ]
 
 
 @router.get("/users/{user_id}/summary", response_model=PublicUserSummaryResponse, tags=["users"])

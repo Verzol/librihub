@@ -27,7 +27,11 @@ class ReviewResponse(BaseModel):
     review_id: int
     transaction_id: int
     reviewer_user_id: int
+    reviewer_full_name: str | None = None
     reviewee_user_id: int
+    reviewee_full_name: str | None = None
+    book_title: str | None = None
+    book_author: str | None = None
     rating_score: int
     review_content: str | None
     review_type: ReviewType
