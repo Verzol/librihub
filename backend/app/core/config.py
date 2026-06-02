@@ -28,7 +28,7 @@ class Settings(BaseSettings):
         "http://127.0.0.1:3000",
     ]
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(env_file=["../.env", ".env"], env_file_encoding="utf-8", extra="ignore")
 
     @field_validator("cors_origins", mode="before")
     @classmethod

@@ -12,9 +12,11 @@ from app.models.erd import User
 from app.modules.users.service import get_user_by_id
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.api_v1_prefix}/auth/login")
+optional_oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.api_v1_prefix}/auth/login", auto_error=False)
 
 DbSession = Annotated[Session, Depends(get_db)]
 BearerToken = Annotated[str, Depends(oauth2_scheme)]
+OptionalBearerToken = Annotated[str | None, Depends(optional_oauth2_scheme)]
 
 
 def get_current_user(db: DbSession, token: BearerToken) -> User:
@@ -44,3 +46,15 @@ def get_current_user(db: DbSession, token: BearerToken) -> User:
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
+
+
+def get_optional_current_user(db: DbSession, token: OptionalBearerToken) -> User | None:
+    if not token:
+        return None
+    try:
+        return get_current_user(db, token)
+    except HTTPException:
+        return None
+
+
+OptionalCurrentUser = Annotated[User | None, Depends(get_optional_current_user)]

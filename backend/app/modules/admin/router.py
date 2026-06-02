@@ -9,20 +9,26 @@ from app.modules.admin.schemas import (
     AdminPointAdjustmentResponse,
     AdminTransactionResponse,
     AdminUserResponse,
+    CourierApplicationResponse,
+    CourierApplicationReviewRequest,
 )
 from app.modules.admin.service import (
     AdminRequiredError,
     BookNotFoundError,
+    CourierApplicationNotFoundError,
     InvalidAdminActionError,
     TransactionNotFoundError,
     UserNotFoundError,
     adjust_user_points,
+    approve_courier_application,
     cancel_transaction,
     hide_book,
     list_activity_logs,
     list_admin_actions,
+    list_courier_applications,
     list_users,
     lock_user,
+    reject_courier_application,
     restore_book,
     unlock_user,
 )
@@ -37,6 +43,74 @@ def read_users(db: DbSession, current_user: CurrentUser) -> list[AdminUserRespon
         return [AdminUserResponse.model_validate(user) for user in list_users(db, current_user)]
     except AdminRequiredError:
         raise _admin_required_error() from None
+
+
+@router.get("/courier-applications", response_model=list[CourierApplicationResponse])
+def read_courier_applications(
+    db: DbSession,
+    current_user: CurrentUser,
+) -> list[CourierApplicationResponse]:
+    try:
+        return [
+            CourierApplicationResponse.model_validate(application)
+            for application in list_courier_applications(db, current_user)
+        ]
+    except AdminRequiredError:
+        raise _admin_required_error() from None
+
+
+@router.post(
+    "/courier-applications/{courier_id}/approve",
+    response_model=CourierApplicationResponse,
+)
+def approve_courier(
+    courier_id: int,
+    payload: CourierApplicationReviewRequest,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> CourierApplicationResponse:
+    try:
+        courier = approve_courier_application(db, current_user, courier_id, payload)
+    except AdminRequiredError:
+        raise _admin_required_error() from None
+    except CourierApplicationNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Courier application not found.",
+        ) from None
+    except InvalidAdminActionError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only pending courier applications can be approved.",
+        ) from None
+    return CourierApplicationResponse.model_validate(courier)
+
+
+@router.post(
+    "/courier-applications/{courier_id}/reject",
+    response_model=CourierApplicationResponse,
+)
+def reject_courier(
+    courier_id: int,
+    payload: CourierApplicationReviewRequest,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> CourierApplicationResponse:
+    try:
+        courier = reject_courier_application(db, current_user, courier_id, payload)
+    except AdminRequiredError:
+        raise _admin_required_error() from None
+    except CourierApplicationNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Courier application not found.",
+        ) from None
+    except InvalidAdminActionError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only pending courier applications can be rejected.",
+        ) from None
+    return CourierApplicationResponse.model_validate(courier)
 
 
 @router.post("/users/{user_id}/lock", response_model=AdminUserResponse)

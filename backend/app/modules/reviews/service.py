@@ -78,6 +78,16 @@ def list_reviews_for_user(db: Session, user_id: int) -> list[Review]:
     return list(db.scalars(statement))
 
 
+def list_reviews_for_book(db: Session, book_id: int) -> list[Review]:
+    statement = (
+        select(Review)
+        .join(Transaction, Transaction.transaction_id == Review.transaction_id)
+        .where(Transaction.book_id == book_id)
+        .order_by(Review.created_at.desc(), Review.review_id.desc())
+    )
+    return list(db.scalars(statement))
+
+
 def _get_participant_user_ids(db: Session, transaction: Transaction) -> set[int]:
     participants = {transaction.owner_id, transaction.requester_id}
     courier_user_id = _get_transaction_courier_user_id(db, transaction.transaction_id)

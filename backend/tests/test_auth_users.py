@@ -93,6 +93,26 @@ def test_login_and_current_user(client: TestClient) -> None:
     assert me_response.json()["email"] == payload["email"]
 
 
+def test_user_summary_exposes_public_profile_without_contact_fields(client: TestClient) -> None:
+    payload = registration_payload()
+    register_response = client.post("/api/v1/auth/register", json=payload)
+    token = register_response.json()["access_token"]
+    user_id = register_response.json()["user"]["user_id"]
+
+    response = client.get(
+        f"/api/v1/users/{user_id}/summary",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["full_name"] == payload["full_name"]
+    assert body["role"] == "MEMBER"
+    assert body["membership_status"] == "ACTIVE"
+    assert "email" not in body
+    assert "phone" not in body
+
+
 def test_login_rejects_bad_password(client: TestClient) -> None:
     payload = registration_payload()
     client.post("/api/v1/auth/register", json=payload)

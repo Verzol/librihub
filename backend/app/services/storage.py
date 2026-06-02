@@ -1,3 +1,4 @@
+import json
 from io import BytesIO
 from uuid import uuid4
 
@@ -34,6 +35,18 @@ def upload_book_cover(content: bytes, content_type: str, original_filename: str)
     try:
         if not client.bucket_exists(settings.minio_bucket_book_covers):
             client.make_bucket(settings.minio_bucket_book_covers)
+            policy = {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Principal": {"AWS": ["*"]},
+                        "Action": ["s3:GetObject"],
+                        "Resource": [f"arn:aws:s3:::{settings.minio_bucket_book_covers}/*"]
+                    }
+                ]
+            }
+            client.set_bucket_policy(settings.minio_bucket_book_covers, json.dumps(policy))
         client.put_object(
             settings.minio_bucket_book_covers,
             object_name,

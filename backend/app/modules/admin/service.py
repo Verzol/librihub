@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -26,6 +28,7 @@ from app.models.erd import (
     User,
 )
 from app.modules.admin.schemas import AdminPointAdjustmentRequest
+from app.modules.admin.schemas import CourierApplicationReviewRequest
 from app.modules.points.service import InsufficientPointsError, add_point_change
 
 
@@ -49,9 +52,80 @@ class InvalidAdminActionError(Exception):
     pass
 
 
+class CourierApplicationNotFoundError(Exception):
+    pass
+
+
 def list_users(db: Session, current_user: User) -> list[User]:
     _ensure_admin(current_user)
     return list(db.scalars(select(User).order_by(User.created_at.desc(), User.user_id.desc())))
+
+
+def list_courier_applications(db: Session, current_user: User) -> list[CourierProfile]:
+    _ensure_admin(current_user)
+    statement = select(CourierProfile).order_by(
+        CourierProfile.registered_at.desc(),
+        CourierProfile.courier_id.desc(),
+    )
+    return list(db.scalars(statement))
+
+
+def approve_courier_application(
+    db: Session,
+    current_user: User,
+    courier_id: int,
+    payload: CourierApplicationReviewRequest,
+) -> CourierProfile:
+    admin = _ensure_admin(current_user)
+    courier = _get_courier_application_for_update(db, courier_id)
+    if courier.courier_status != CourierStatus.PENDING:
+        raise InvalidAdminActionError
+    user = _get_user_for_update(db, courier.user_id)
+
+    now = datetime.now(UTC)
+    courier.courier_status = CourierStatus.AVAILABLE
+    courier.reviewed_by_admin_id = admin.admin_id
+    courier.reviewed_at = now
+    courier.review_note = payload.review_note
+    user.role = UserRole.COURIER
+    _add_admin_action(
+        db,
+        admin=admin,
+        target_user_id=user.user_id,
+        action_type=AdminActionType.OTHER,
+        description=f"Approved courier application #{courier.courier_id}.",
+    )
+    db.commit()
+    db.refresh(courier)
+    return courier
+
+
+def reject_courier_application(
+    db: Session,
+    current_user: User,
+    courier_id: int,
+    payload: CourierApplicationReviewRequest,
+) -> CourierProfile:
+    admin = _ensure_admin(current_user)
+    courier = _get_courier_application_for_update(db, courier_id)
+    if courier.courier_status != CourierStatus.PENDING:
+        raise InvalidAdminActionError
+
+    now = datetime.now(UTC)
+    courier.courier_status = CourierStatus.INACTIVE
+    courier.reviewed_by_admin_id = admin.admin_id
+    courier.reviewed_at = now
+    courier.review_note = payload.review_note
+    _add_admin_action(
+        db,
+        admin=admin,
+        target_user_id=courier.user_id,
+        action_type=AdminActionType.OTHER,
+        description=f"Rejected courier application #{courier.courier_id}.",
+    )
+    db.commit()
+    db.refresh(courier)
+    return courier
 
 
 def lock_user(db: Session, current_user: User, user_id: int) -> User:
@@ -227,19 +301,33 @@ def _get_book_for_update(db: Session, book_id: int) -> Book:
     return book
 
 
+def _get_courier_application_for_update(db: Session, courier_id: int) -> CourierProfile:
+    courier = db.scalar(
+        select(CourierProfile)
+        .where(CourierProfile.courier_id == courier_id)
+        .with_for_update()
+    )
+    if courier is None:
+        raise CourierApplicationNotFoundError
+    return courier
+
+
 def _cancel_active_delivery(db: Session, transaction_id: int) -> None:
     delivery = db.scalar(
         select(Delivery)
         .where(Delivery.transaction_id == transaction_id)
         .with_for_update()
     )
-    if delivery is None or delivery.delivery_status not in {
-        DeliveryStatus.ASSIGNED,
-        DeliveryStatus.PICKED_UP,
+    if delivery is None or delivery.delivery_status in {
+        DeliveryStatus.DELIVERED,
+        DeliveryStatus.FAILED,
+        DeliveryStatus.CANCELLED,
     }:
         return
 
     delivery.delivery_status = DeliveryStatus.CANCELLED
+    if delivery.courier_id is None:
+        return
     courier = db.scalar(
         select(CourierProfile)
         .where(CourierProfile.courier_id == delivery.courier_id)

@@ -130,10 +130,17 @@ def complete_direct_transaction(
 def register_courier(client: TestClient, headers: dict[str, str]) -> None:
     response = client.post(
         "/api/v1/users/me/courier-profile",
-        json={"delivery_area": "Ha Noi"},
+        json={"delivery_area": "Ha Noi", "vehicle_type": "Bike"},
         headers=headers,
     )
     assert response.status_code == 200
+    courier_id = response.json()["courier_profile"]["courier_id"]
+    approve_response = client.post(
+        f"/api/v1/admin/courier-applications/{courier_id}/approve",
+        json={"review_note": "Approved."},
+        headers=admin_headers(),
+    )
+    assert approve_response.status_code == 200
 
 
 def test_create_review_after_completed_transaction_and_prevent_duplicate(
@@ -310,14 +317,25 @@ def test_admin_cancel_free_courier_transaction_releases_courier(client: TestClie
             "book_id": book["book_id"],
             "transaction_type": "PERMANENT_EXCHANGE",
             "delivery_method": "FREE_COURIER",
+            "receiver_address": "Thu vien UET",
+            "receiver_lat": 21.03792,
+            "receiver_lng": 105.78219,
         },
         headers=requester_headers,
     )
     transaction = transaction_response.json()
-    client.post(f"/api/v1/transactions/{transaction['transaction_id']}/accept", headers=owner_headers)
+    client.post(
+        f"/api/v1/transactions/{transaction['transaction_id']}/accept",
+        json={
+            "pickup_address": "Sanh E3 UET",
+            "pickup_lat": 21.03823,
+            "pickup_lng": 105.78292,
+        },
+        headers=owner_headers,
+    )
     delivery_response = client.post(
         f"/api/v1/deliveries/transactions/{transaction['transaction_id']}/accept",
-        json={"pickup_address": "Owner address", "receiver_address": "Requester address"},
+        json={},
         headers=courier_headers,
     )
     assert delivery_response.status_code == 201

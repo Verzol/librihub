@@ -1,0 +1,80 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: librihub-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-librihub}
+      POSTGRES_USER: ${POSTGRES_USER:-librihub}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-librihub_password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-librihub} -d ${POSTGRES_DB:-librihub}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  adminer:
+    image: adminer:latest
+    container_name: librihub-adminer
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  minio:
+    image: minio/minio:latest
+    container_name: librihub-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-librihub_minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-librihub_minio_password}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
+  backend:
+    build:
+      context: ./backend
+    container_name: librihub-backend
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-librihub}:${POSTGRES_PASSWORD:-librihub}@postgres:5432/${POSTGRES_DB:-librihub}
+      MINIO_ENDPOINT: http://minio:9000
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: librihub-frontend
+    environment:
+      BACKEND_INTERNAL_URL: http://backend:8000
+      NEXT_PUBLIC_API_BASE_URL: ""
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/workspace
+      - frontend_node_modules:/workspace/node_modules
+      - frontend_next:/workspace/.next
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  minio_data:
+  frontend_node_modules:
+  frontend_next:

@@ -1,9 +1,9 @@
-from sqlalchemy import or_, select
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from app.models.enums import ActivityType, BookStatus, UserRole
-from app.models.erd import ActivityLog, Book, Category, User
+from app.models.enums import AccountStatus, ActivityType, BookStatus, CourierStatus, TransactionStatus, UserRole
+from app.models.erd import ActivityLog, Book, Category, CourierProfile, Transaction, User
 from app.modules.books.schemas import BookCreateRequest, BookUpdateRequest, CategoryCreateRequest
 
 
@@ -38,6 +38,60 @@ def list_categories(db: Session, include_inactive: bool = False) -> list[Categor
     return list(db.scalars(statement))
 
 
+def list_category_summaries(db: Session) -> list[tuple[Category, int]]:
+    statement = (
+        select(Category, func.count(Book.book_id))
+        .outerjoin(
+            Book,
+            and_(Book.category_id == Category.category_id, Book.book_status != BookStatus.REMOVED),
+        )
+        .where(Category.is_active.is_(True))
+        .group_by(Category.category_id)
+        .order_by(Category.category_name)
+    )
+    return [(category, int(book_count)) for category, book_count in db.execute(statement).all()]
+
+
+def get_community_leaderboard(db: Session) -> dict[str, list[object]]:
+    completed_count = func.count(Transaction.transaction_id)
+    top_books_statement = (
+        select(Book, Category.category_name, completed_count.label("borrow_count"))
+        .join(Category, Category.category_id == Book.category_id)
+        .outerjoin(
+            Transaction,
+            and_(
+                Transaction.book_id == Book.book_id,
+                Transaction.transaction_status == TransactionStatus.COMPLETED,
+            ),
+        )
+        .where(Book.book_status != BookStatus.REMOVED)
+        .group_by(Book.book_id, Category.category_name)
+        .order_by(desc("borrow_count"), Book.created_at.desc())
+        .limit(5)
+    )
+
+    top_couriers_statement = (
+        select(CourierProfile, User.full_name)
+        .join(User, User.user_id == CourierProfile.user_id)
+        .where(CourierProfile.courier_status.in_([CourierStatus.AVAILABLE, CourierStatus.BUSY]))
+        .order_by(CourierProfile.successful_delivery_count.desc(), CourierProfile.registered_at.asc())
+        .limit(5)
+    )
+
+    top_users_statement = (
+        select(User)
+        .where(User.account_status == AccountStatus.ACTIVE)
+        .order_by(User.current_points.desc(), User.created_at.asc())
+        .limit(5)
+    )
+
+    return {
+        "top_books": list(db.execute(top_books_statement).all()),
+        "top_couriers": list(db.execute(top_couriers_statement).all()),
+        "top_point_users": list(db.scalars(top_users_statement)),
+    }
+
+
 def create_category(db: Session, current_user: User, payload: CategoryCreateRequest) -> Category:
     if current_user.role != UserRole.ADMIN:
         raise AdminRequiredError
@@ -59,7 +113,7 @@ def create_category(db: Session, current_user: User, payload: CategoryCreateRequ
 
 def list_books(
     db: Session,
-    current_user: User,
+    current_user: User | None = None,
     *,
     mine: bool = False,
     query: str | None = None,
@@ -69,6 +123,8 @@ def list_books(
     statement = select(Book).options(selectinload(Book.category)).order_by(Book.created_at.desc())
 
     if mine:
+        if not current_user:
+            raise ValueError("mine=True requires current_user")
         statement = statement.where(Book.owner_id == current_user.user_id)
         statement = statement.where(Book.book_status != BookStatus.REMOVED)
     else:
@@ -101,6 +157,7 @@ def create_book(db: Session, current_user: User, payload: BookCreateRequest) -> 
         category_id=payload.category_id,
         title=payload.title,
         author=payload.author,
+        book_description=payload.book_description,
         publication_year=payload.publication_year,
         book_condition=payload.book_condition,
         exchange_mode=payload.exchange_mode,
@@ -176,6 +233,28 @@ def set_book_cover(db: Session, current_user: User, book_id: int, cover_image_ur
     if updated is None:
         raise RuntimeError("Book cover update could not be reloaded.")
     return updated
+
+
+def publish_book(db: Session, current_user: User, book_id: int) -> Book:
+    book = db.scalar(select(Book).where(Book.book_id == book_id).with_for_update())
+    if book is None or book.book_status == BookStatus.REMOVED:
+        raise BookNotFoundError
+    if book.owner_id != current_user.user_id:
+        raise ForbiddenBookActionError
+    if book.book_status != BookStatus.UNLISTED:
+        raise InvalidBookStateError
+
+    book.book_status = BookStatus.AVAILABLE
+    db.add(
+        ActivityLog(
+            user_id=current_user.user_id,
+            activity_type=ActivityType.UPDATE_BOOK,
+            activity_description=f"Published book #{book.book_id}: {book.title}.",
+        )
+    )
+    db.commit()
+    db.refresh(book)
+    return book
 
 
 def ensure_active_category(db: Session, category_id: int) -> Category:

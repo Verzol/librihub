@@ -1,20 +1,28 @@
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Body, HTTPException, Query, status
 
 from app.core.dependencies import CurrentUser, DbSession
 from app.modules.points.service import InsufficientPointsError
-from app.modules.transactions.schemas import TransactionCreateRequest, TransactionResponse
+from app.modules.transactions.schemas import (
+    TransactionAcceptRequest,
+    TransactionCreateRequest,
+    TransactionResponse,
+)
 from app.modules.transactions.service import (
     BookNotAvailableError,
+    DeliveryAreaNotSupportedError,
     ForbiddenTransactionActionError,
     InvalidTransactionRequestError,
     InvalidTransactionStateError,
     TransactionNotFoundError,
     accept_transaction,
     cancel_transaction,
+    confirm_borrow_receipt,
+    confirm_borrow_return,
     confirm_transaction,
     create_transaction,
     list_my_transactions,
     reject_transaction,
+    request_borrow_return,
 )
 
 router = APIRouter()
@@ -43,6 +51,11 @@ def add_transaction(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid transaction request for this book.",
         ) from None
+    except DeliveryAreaNotSupportedError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Free courier only supports locations within 3km of UET.",
+        ) from None
     return TransactionResponse.model_validate(transaction)
 
 
@@ -63,9 +76,14 @@ def read_my_transactions(
     response_model=TransactionResponse,
     tags=["transactions"],
 )
-def accept(transaction_id: int, db: DbSession, current_user: CurrentUser) -> TransactionResponse:
+def accept(
+    transaction_id: int,
+    db: DbSession,
+    current_user: CurrentUser,
+    payload: TransactionAcceptRequest | None = Body(default=None),
+) -> TransactionResponse:
     try:
-        transaction = accept_transaction(db, current_user, transaction_id)
+        transaction = accept_transaction(db, current_user, transaction_id, payload)
     except TransactionNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found.") from None
     except ForbiddenTransactionActionError:
@@ -77,6 +95,16 @@ def accept(transaction_id: int, db: DbSession, current_user: CurrentUser) -> Tra
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Only pending transactions can be accepted.",
+        ) from None
+    except InvalidTransactionRequestError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Pickup address and coordinates are required for courier delivery.",
+        ) from None
+    except DeliveryAreaNotSupportedError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Free courier only supports locations within 3km of UET.",
         ) from None
     return TransactionResponse.model_validate(transaction)
 
@@ -123,6 +151,80 @@ def cancel(transaction_id: int, db: DbSession, current_user: CurrentUser) -> Tra
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="This transaction cannot be cancelled in its current state.",
+        ) from None
+    return TransactionResponse.model_validate(transaction)
+
+
+@router.post(
+    "/transactions/{transaction_id}/confirm-receipt",
+    response_model=TransactionResponse,
+    tags=["transactions"],
+)
+def confirm_receipt(transaction_id: int, db: DbSession, current_user: CurrentUser) -> TransactionResponse:
+    try:
+        transaction = confirm_borrow_receipt(db, current_user, transaction_id)
+    except TransactionNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found.") from None
+    except ForbiddenTransactionActionError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the requester can confirm receipt for this transaction.",
+        ) from None
+    except InvalidTransactionStateError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This transaction cannot be marked as received in its current state.",
+        ) from None
+    return TransactionResponse.model_validate(transaction)
+
+
+@router.post(
+    "/transactions/{transaction_id}/return",
+    response_model=TransactionResponse,
+    tags=["transactions"],
+)
+def request_return(transaction_id: int, db: DbSession, current_user: CurrentUser) -> TransactionResponse:
+    try:
+        transaction = request_borrow_return(db, current_user, transaction_id)
+    except TransactionNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found.") from None
+    except ForbiddenTransactionActionError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the requester can return this borrowed book.",
+        ) from None
+    except InvalidTransactionStateError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This transaction cannot be returned in its current state.",
+        ) from None
+    return TransactionResponse.model_validate(transaction)
+
+
+@router.post(
+    "/transactions/{transaction_id}/confirm-return",
+    response_model=TransactionResponse,
+    tags=["transactions"],
+)
+def confirm_return(transaction_id: int, db: DbSession, current_user: CurrentUser) -> TransactionResponse:
+    try:
+        transaction = confirm_borrow_return(db, current_user, transaction_id)
+    except TransactionNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found.") from None
+    except ForbiddenTransactionActionError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the owner can confirm returned books.",
+        ) from None
+    except InvalidTransactionStateError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This transaction cannot be confirmed returned in its current state.",
+        ) from None
+    except InsufficientPointsError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Requester has insufficient points for late return penalty.",
         ) from None
     return TransactionResponse.model_validate(transaction)
 

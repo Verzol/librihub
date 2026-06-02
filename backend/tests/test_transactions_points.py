@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -91,14 +92,18 @@ def create_transaction(
     requester_headers: dict[str, str],
     book_id: int,
     transaction_type: str = "PERMANENT_EXCHANGE",
+    borrow_duration_days: int | None = None,
 ) -> dict:
+    payload: dict[str, object] = {
+        "book_id": book_id,
+        "transaction_type": transaction_type,
+        "delivery_method": "DIRECT_CONTACT",
+    }
+    if borrow_duration_days is not None:
+        payload["borrow_duration_days"] = borrow_duration_days
     response = client.post(
         "/api/v1/transactions",
-        json={
-            "book_id": book_id,
-            "transaction_type": transaction_type,
-            "delivery_method": "DIRECT_CONTACT",
-        },
+        json=payload,
         headers=requester_headers,
     )
     assert response.status_code == 201
@@ -218,7 +223,85 @@ def test_cancel_accepted_transaction_releases_book(client: TestClient) -> None:
     assert mine_response.json()[0]["book_status"] == "AVAILABLE"
 
 
-def test_borrow_return_settlement_uses_borrow_points(client: TestClient) -> None:
+def test_borrow_return_requires_duration_and_completes_to_unlisted(client: TestClient) -> None:
+    owner_headers = auth_headers(client, "owner@example.com", "0900000001", "SV101")
+    requester_headers = auth_headers(client, "requester@example.com", "0900000002", "SV102")
+    book = create_book(client, owner_headers, exchange_mode="BORROW_RETURN")
+
+    invalid_response = client.post(
+        "/api/v1/transactions",
+        json={
+            "book_id": book["book_id"],
+            "transaction_type": "BORROW_RETURN",
+            "delivery_method": "DIRECT_CONTACT",
+        },
+        headers=requester_headers,
+    )
+    assert invalid_response.status_code == 422
+
+    transaction = create_transaction(
+        client,
+        requester_headers,
+        book["book_id"],
+        transaction_type="BORROW_RETURN",
+        borrow_duration_days=7,
+    )
+    accept_response = client.post(
+        f"/api/v1/transactions/{transaction['transaction_id']}/accept",
+        headers=owner_headers,
+    )
+    assert accept_response.status_code == 200
+    assert accept_response.json()["transaction_status"] == "ACCEPTED"
+
+    old_confirm_response = client.post(
+        f"/api/v1/transactions/{transaction['transaction_id']}/confirm",
+        headers=requester_headers,
+    )
+    assert old_confirm_response.status_code == 409
+
+    receipt_response = client.post(
+        f"/api/v1/transactions/{transaction['transaction_id']}/confirm-receipt",
+        headers=requester_headers,
+    )
+    assert receipt_response.status_code == 200
+    assert receipt_response.json()["transaction_status"] == "BORROWING"
+    assert receipt_response.json()["borrowed_at"] is not None
+    assert receipt_response.json()["expected_return_at"] is not None
+
+    return_response = client.post(
+        f"/api/v1/transactions/{transaction['transaction_id']}/return",
+        headers=requester_headers,
+    )
+    assert return_response.status_code == 200
+    assert return_response.json()["transaction_status"] == "RETURN_PENDING"
+
+    confirm_return_response = client.post(
+        f"/api/v1/transactions/{transaction['transaction_id']}/confirm-return",
+        headers=owner_headers,
+    )
+    assert confirm_return_response.status_code == 200
+    completed = confirm_return_response.json()
+    assert completed["transaction_status"] == "COMPLETED"
+    assert completed["late_days"] == 0
+    assert completed["late_fee_points"] == 0
+    assert client.get("/api/v1/points/me", headers=owner_headers).json()["current_points"] == 25
+    assert client.get("/api/v1/points/me", headers=requester_headers).json()["current_points"] == 15
+
+    owner_books = client.get("/api/v1/books?mine=true", headers=owner_headers).json()
+    assert owner_books[0]["book_status"] == "UNLISTED"
+    public_books = client.get("/api/v1/books", headers=requester_headers).json()
+    assert public_books == []
+
+    forbidden_publish = client.post(f"/api/v1/books/{book['book_id']}/publish", headers=requester_headers)
+    assert forbidden_publish.status_code == 403
+    publish_response = client.post(f"/api/v1/books/{book['book_id']}/publish", headers=owner_headers)
+    assert publish_response.status_code == 200
+    assert publish_response.json()["book_status"] == "AVAILABLE"
+
+
+def test_late_borrow_return_charges_requester_penalty(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.modules.transactions import service as transaction_service
+
     owner_headers = auth_headers(client, "owner@example.com", "0900000001", "SV101")
     requester_headers = auth_headers(client, "requester@example.com", "0900000002", "SV102")
     book = create_book(client, owner_headers, exchange_mode="BORROW_RETURN")
@@ -227,17 +310,40 @@ def test_borrow_return_settlement_uses_borrow_points(client: TestClient) -> None
         requester_headers,
         book["book_id"],
         transaction_type="BORROW_RETURN",
+        borrow_duration_days=1,
     )
     client.post(f"/api/v1/transactions/{transaction['transaction_id']}/accept", headers=owner_headers)
-    client.post(f"/api/v1/transactions/{transaction['transaction_id']}/confirm", headers=owner_headers)
-    response = client.post(
-        f"/api/v1/transactions/{transaction['transaction_id']}/confirm",
+
+    class BorrowStart(datetime):
+        @classmethod
+        def now(cls, tz: object = None) -> datetime:
+            return datetime(2026, 1, 1, tzinfo=UTC)
+
+    monkeypatch.setattr(transaction_service, "datetime", BorrowStart)
+    client.post(
+        f"/api/v1/transactions/{transaction['transaction_id']}/confirm-receipt",
         headers=requester_headers,
     )
 
+    class LateReturn(datetime):
+        @classmethod
+        def now(cls, tz: object = None) -> datetime:
+            return datetime(2026, 1, 4, 1, tzinfo=UTC)
+
+    monkeypatch.setattr(transaction_service, "datetime", LateReturn)
+    client.post(f"/api/v1/transactions/{transaction['transaction_id']}/return", headers=requester_headers)
+    response = client.post(
+        f"/api/v1/transactions/{transaction['transaction_id']}/confirm-return",
+        headers=owner_headers,
+    )
+
     assert response.status_code == 200
-    assert client.get("/api/v1/points/me", headers=owner_headers).json()["current_points"] == 25
-    assert client.get("/api/v1/points/me", headers=requester_headers).json()["current_points"] == 15
+    assert response.json()["late_days"] == 3
+    assert response.json()["late_fee_points"] == 6
+    assert client.get("/api/v1/points/me", headers=requester_headers).json()["current_points"] == 9
+    requester_ledger = client.get("/api/v1/points/me/ledger", headers=requester_headers).json()
+    assert requester_ledger[0]["reason"] == "LATE_RETURN_PENALTY"
+    assert requester_ledger[0]["point_change"] == -6
 
 
 def test_transaction_persistence_has_final_book_state(client: TestClient) -> None:

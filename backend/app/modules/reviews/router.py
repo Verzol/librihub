@@ -7,6 +7,7 @@ from app.modules.reviews.service import (
     ForbiddenReviewError,
     TransactionNotReviewableError,
     create_review,
+    list_reviews_for_book,
     list_reviews_for_user,
 )
 
@@ -51,3 +52,12 @@ def read_user_reviews(
     current_user: CurrentUser,
 ) -> list[ReviewResponse]:
     return [ReviewResponse.model_validate(review) for review in list_reviews_for_user(db, user_id)]
+
+
+@router.get("/books/{book_id}/reviews", response_model=list[ReviewResponse], tags=["reviews"])
+def read_book_reviews(
+    book_id: int,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> list[ReviewResponse]:
+    return [ReviewResponse.model_validate(review) for review in list_reviews_for_book(db, book_id)]

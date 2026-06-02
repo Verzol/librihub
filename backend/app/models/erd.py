@@ -136,6 +136,18 @@ class CourierProfile(Base):
         default=0,
         server_default="0",
     )
+    contact_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    contact_phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    contact_address: Mapped[str | None] = mapped_column(Text, nullable=True)
+    vehicle_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    document_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    application_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewed_by_admin_id: Mapped[int | None] = mapped_column(
+        ForeignKey("ADMIN_PROFILE.admin_id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     registered_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -222,6 +234,7 @@ class Book(Base):
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     author: Mapped[str] = mapped_column(String(255), nullable=False)
+    book_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     publication_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
     book_condition: Mapped[BookCondition] = mapped_column(
         Enum(BookCondition, name="book_condition_enum", native_enum=True),
@@ -312,6 +325,13 @@ class Transaction(Base):
         default=False,
         server_default="false",
     )
+    borrow_duration_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    expected_return_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    borrowed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    return_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    returned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    late_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    late_fee_points: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     requested_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -321,6 +341,12 @@ class Transaction(Base):
 
     __table_args__ = (
         CheckConstraint("owner_id <> requester_id", name="ck_TRANSACTION_owner_not_requester"),
+        CheckConstraint(
+            "borrow_duration_days IS NULL OR borrow_duration_days > 0",
+            name="ck_TRANSACTION_borrow_duration_positive",
+        ),
+        CheckConstraint("late_days >= 0", name="ck_TRANSACTION_late_days_nonnegative"),
+        CheckConstraint("late_fee_points >= 0", name="ck_TRANSACTION_late_fee_points_nonnegative"),
         Index("ix_TRANSACTION_owner_id", "owner_id"),
         Index("ix_TRANSACTION_requester_id", "requester_id"),
         Index("ix_TRANSACTION_transaction_status", "transaction_status"),
@@ -337,12 +363,16 @@ class Delivery(Base):
         nullable=False,
         unique=True,
     )
-    courier_id: Mapped[int] = mapped_column(
+    courier_id: Mapped[int | None] = mapped_column(
         ForeignKey("COURIER_PROFILE.courier_id", ondelete="RESTRICT"),
-        nullable=False,
+        nullable=True,
     )
-    pickup_address: Mapped[str] = mapped_column(Text, nullable=False)
+    pickup_address: Mapped[str | None] = mapped_column(Text, nullable=True)
     receiver_address: Mapped[str] = mapped_column(Text, nullable=False)
+    pickup_lat: Mapped[float | None] = mapped_column(nullable=True)
+    pickup_lng: Mapped[float | None] = mapped_column(nullable=True)
+    receiver_lat: Mapped[float | None] = mapped_column(nullable=True)
+    receiver_lng: Mapped[float | None] = mapped_column(nullable=True)
     delivery_status: Mapped[DeliveryStatus] = mapped_column(
         Enum(DeliveryStatus, name="delivery_status_enum", native_enum=True),
         nullable=False,
@@ -352,6 +382,7 @@ class Delivery(Base):
     assigned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     picked_up_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expected_delivery_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         Index("ix_DELIVERY_transaction_id", "transaction_id"),

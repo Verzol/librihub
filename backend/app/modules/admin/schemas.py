@@ -7,6 +7,7 @@ from app.models.enums import (
     ActivityType,
     AdminActionType,
     BookStatus,
+    CourierStatus,
     PointLedgerReason,
     RoleInTransaction,
     TransactionStatus,
@@ -68,6 +69,38 @@ class AdminPointAdjustmentRequest(BaseModel):
     @classmethod
     def strip_reason(cls, value: str) -> str:
         return value.strip()
+
+
+class CourierApplicationReviewRequest(BaseModel):
+    review_note: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("review_note")
+    @classmethod
+    def strip_review_note(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
+
+
+class CourierApplicationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    courier_id: int
+    user_id: int
+    delivery_area: str
+    courier_status: CourierStatus
+    successful_delivery_count: int
+    contact_name: str | None
+    contact_phone: str | None
+    contact_address: str | None
+    vehicle_type: str | None
+    document_url: str | None
+    application_note: str | None
+    reviewed_by_admin_id: int | None
+    reviewed_at: datetime | None
+    review_note: str | None
+    registered_at: datetime
 
 
 class AdminPointAdjustmentResponse(BaseModel):
