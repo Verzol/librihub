@@ -13,7 +13,7 @@ from app.models.enums import (
     UserRole,
 )
 from app.models.erd import ActivityLog, CourierProfile, MemberProfile, TransactionPointLedger, User
-from app.modules.users.schemas import CourierProfileCreateRequest, LoginRequest, RegisterRequest
+from app.modules.users.schemas import CourierProfileCreateRequest, LoginRequest, ProfileUpdateRequest, RegisterRequest
 
 INITIAL_MEMBER_POINTS = 20
 
@@ -34,6 +34,10 @@ class DuplicateCourierProfileError(Exception):
     pass
 
 
+class UserNotFoundError(Exception):
+    pass
+
+
 def get_user_by_id(db: Session, user_id: int) -> User | None:
     statement = (
         select(User)
@@ -45,6 +49,13 @@ def get_user_by_id(db: Session, user_id: int) -> User | None:
         .where(User.user_id == user_id)
     )
     return db.scalar(statement)
+
+
+def get_public_user_summary(db: Session, user_id: int) -> User:
+    user = get_user_by_id(db, user_id)
+    if user is None:
+        raise UserNotFoundError
+    return user
 
 
 def register_member(db: Session, payload: RegisterRequest) -> tuple[User, str]:
@@ -146,16 +157,21 @@ def register_courier_profile(
     courier_profile = CourierProfile(
         user_id=current_user.user_id,
         delivery_area=payload.delivery_area,
-        courier_status=CourierStatus.AVAILABLE,
+        courier_status=CourierStatus.PENDING,
         successful_delivery_count=0,
+        contact_name=payload.contact_name,
+        contact_phone=payload.contact_phone,
+        contact_address=payload.contact_address,
+        vehicle_type=payload.vehicle_type,
+        document_url=payload.document_url,
+        application_note=payload.application_note,
     )
-    current_user.role = UserRole.COURIER
     db.add(courier_profile)
     db.add(
         ActivityLog(
             user_id=current_user.user_id,
             activity_type=ActivityType.UPDATE_PROFILE,
-            activity_description="Courier profile registered and marked available.",
+            activity_description="Courier application submitted for admin review.",
         )
     )
     try:
@@ -168,3 +184,68 @@ def register_courier_profile(
     if user is None:
         raise RuntimeError("Courier user could not be reloaded.")
     return user
+
+
+def update_member_profile(
+    db: Session,
+    current_user: User,
+    payload: ProfileUpdateRequest,
+) -> User:
+    # Check if new phone is duplicate
+    if payload.phone is not None and payload.phone != current_user.phone:
+        existing_phone = db.scalar(
+            select(User.user_id).where(User.phone == payload.phone)
+        )
+        if existing_phone is not None:
+            raise DuplicateIdentityError
+
+    # Check if new student code is duplicate
+    if payload.student_code is not None:
+        if current_user.member_profile and payload.student_code != current_user.member_profile.student_code:
+            existing_student = db.scalar(
+                select(MemberProfile.member_id).where(MemberProfile.student_code == payload.student_code)
+            )
+            if existing_student is not None:
+                raise DuplicateIdentityError
+
+    # Update User fields
+    if payload.full_name is not None:
+        current_user.full_name = payload.full_name
+    if payload.phone is not None:
+        current_user.phone = payload.phone
+
+    # Update MemberProfile fields
+    if current_user.member_profile is not None:
+        if payload.student_code is not None:
+            current_user.member_profile.student_code = payload.student_code
+        if payload.address is not None:
+            current_user.member_profile.address = payload.address
+    elif payload.student_code is not None or payload.address is not None:
+        # If member profile doesn't exist but fields are provided, create it (edge case, usually shouldn't happen for valid users)
+        db.add(
+            MemberProfile(
+                user_id=current_user.user_id,
+                student_code=payload.student_code or "UNKNOWN",
+                address=payload.address or "UNKNOWN",
+                membership_status=MembershipStatus.ACTIVE,
+            )
+        )
+
+    db.add(
+        ActivityLog(
+            user_id=current_user.user_id,
+            activity_type=ActivityType.UPDATE_PROFILE,
+            activity_description="User updated their profile information.",
+        )
+    )
+
+    try:
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        raise DuplicateIdentityError from error
+
+    updated_user = get_user_by_id(db, current_user.user_id)
+    if updated_user is None:
+        raise RuntimeError("Updated user could not be reloaded.")
+    return updated_user

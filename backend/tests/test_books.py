@@ -70,6 +70,7 @@ def book_payload() -> dict[str, object]:
         "category_id": 1,
         "title": "Clean Architecture",
         "author": "Robert C. Martin",
+        "book_description": "A practical guide to software architecture boundaries.",
         "publication_year": 2017,
         "book_condition": "GOOD",
         "exchange_mode": "BOTH",
@@ -83,6 +84,7 @@ def test_create_search_update_and_soft_delete_book(client: TestClient) -> None:
     assert create_response.status_code == 201
     created = create_response.json()
     assert created["title"] == "Clean Architecture"
+    assert created["book_description"] == "A practical guide to software architecture boundaries."
     assert created["book_status"] == "AVAILABLE"
     assert created["category"]["category_name"] == "Technology"
 
@@ -92,12 +94,17 @@ def test_create_search_update_and_soft_delete_book(client: TestClient) -> None:
 
     update_response = client.patch(
         f"/api/v1/books/{created['book_id']}",
-        json={"book_condition": "FAIR", "title": "Clean Architecture Updated"},
+        json={
+            "book_condition": "FAIR",
+            "title": "Clean Architecture Updated",
+            "book_description": "Updated description.",
+        },
         headers=headers,
     )
     assert update_response.status_code == 200
     assert update_response.json()["book_condition"] == "FAIR"
     assert update_response.json()["title"] == "Clean Architecture Updated"
+    assert update_response.json()["book_description"] == "Updated description."
 
     delete_response = client.delete(f"/api/v1/books/{created['book_id']}", headers=headers)
     assert delete_response.status_code == 200

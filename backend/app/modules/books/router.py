@@ -1,6 +1,6 @@
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 
-from app.core.dependencies import CurrentUser, DbSession
+from app.core.dependencies import CurrentUser, DbSession, OptionalCurrentUser
 from app.models.enums import ExchangeMode
 from app.modules.books.schemas import (
     BookCoverUploadResponse,
@@ -9,6 +9,11 @@ from app.modules.books.schemas import (
     BookUpdateRequest,
     CategoryCreateRequest,
     CategoryResponse,
+    CategorySummaryResponse,
+    CommunityLeaderboardResponse,
+    TopBookResponse,
+    TopCourierResponse,
+    TopPointUserResponse,
 )
 from app.modules.books.service import (
     AdminRequiredError,
@@ -19,9 +24,12 @@ from app.modules.books.service import (
     InvalidBookStateError,
     create_book,
     create_category,
+    get_community_leaderboard,
     get_book,
     list_books,
     list_categories,
+    list_category_summaries,
+    publish_book,
     set_book_cover,
     soft_delete_book,
     update_book,
@@ -34,6 +42,56 @@ router = APIRouter()
 @router.get("/categories", response_model=list[CategoryResponse], tags=["books"])
 def read_categories(db: DbSession) -> list[CategoryResponse]:
     return [CategoryResponse.model_validate(category) for category in list_categories(db)]
+
+
+@router.get("/categories/summary", response_model=list[CategorySummaryResponse], tags=["books"])
+def read_category_summary(db: DbSession) -> list[CategorySummaryResponse]:
+    return [
+        CategorySummaryResponse(
+            category_id=category.category_id,
+            category_name=category.category_name,
+            category_description=category.category_description,
+            book_count=book_count,
+        )
+        for category, book_count in list_category_summaries(db)
+    ]
+
+
+@router.get("/community/leaderboard", response_model=CommunityLeaderboardResponse, tags=["books"])
+def read_community_leaderboard(db: DbSession) -> CommunityLeaderboardResponse:
+    leaderboard = get_community_leaderboard(db)
+    return CommunityLeaderboardResponse(
+        top_books=[
+            TopBookResponse(
+                book_id=book.book_id,
+                title=book.title,
+                author=book.author,
+                cover_image_url=book.cover_image_url,
+                category_name=category_name,
+                borrow_count=borrow_count,
+            )
+            for book, category_name, borrow_count in leaderboard["top_books"]
+        ],
+        top_couriers=[
+            TopCourierResponse(
+                courier_id=courier.courier_id,
+                user_id=courier.user_id,
+                full_name=full_name,
+                delivery_area=courier.delivery_area,
+                courier_status=courier.courier_status,
+                successful_delivery_count=courier.successful_delivery_count,
+            )
+            for courier, full_name in leaderboard["top_couriers"]
+        ],
+        top_point_users=[
+            TopPointUserResponse(
+                user_id=user.user_id,
+                full_name=user.full_name,
+                current_points=user.current_points,
+            )
+            for user in leaderboard["top_point_users"]
+        ],
+    )
 
 
 @router.post(
@@ -62,12 +120,15 @@ def add_category(
 @router.get("/books", response_model=list[BookResponse], tags=["books"])
 def read_books(
     db: DbSession,
-    current_user: CurrentUser,
+    current_user: OptionalCurrentUser,
     mine: bool = False,
     q: str | None = Query(default=None, min_length=1, max_length=255),
     category_id: int | None = None,
     exchange_mode: ExchangeMode | None = None,
 ) -> list[BookResponse]:
+    if mine and not current_user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
     books = list_books(
         db,
         current_user,
@@ -97,7 +158,7 @@ def add_book(payload: BookCreateRequest, db: DbSession, current_user: CurrentUse
 
 
 @router.get("/books/{book_id}", response_model=BookResponse, tags=["books"])
-def read_book(book_id: int, db: DbSession, current_user: CurrentUser) -> BookResponse:
+def read_book(book_id: int, db: DbSession, current_user: OptionalCurrentUser) -> BookResponse:
     book = get_book(db, book_id)
     if book is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found.")
@@ -148,6 +209,25 @@ def remove_book(book_id: int, db: DbSession, current_user: CurrentUser) -> BookR
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Only available books can be removed.",
+        ) from None
+    return BookResponse.model_validate(book)
+
+
+@router.post("/books/{book_id}/publish", response_model=BookResponse, tags=["books"])
+def publish(book_id: int, db: DbSession, current_user: CurrentUser) -> BookResponse:
+    try:
+        book = publish_book(db, current_user, book_id)
+    except BookNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found.") from None
+    except ForbiddenBookActionError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the owner can publish this book.",
+        ) from None
+    except InvalidBookStateError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only unlisted books can be published.",
         ) from None
     return BookResponse.model_validate(book)
 

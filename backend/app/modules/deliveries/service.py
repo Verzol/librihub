@@ -48,14 +48,19 @@ class InvalidDeliveryStateError(Exception):
 
 
 def list_available_delivery_tasks(db: Session, current_user: User) -> list[Transaction]:
-    _get_current_courier(db, current_user)
-    assigned_transaction_ids = select(Delivery.transaction_id)
+    courier = _get_current_courier(db, current_user)
+    if courier.courier_status != CourierStatus.AVAILABLE:
+        raise CourierUnavailableError
     statement = (
         select(Transaction)
+        .join(Delivery, Delivery.transaction_id == Transaction.transaction_id)
         .where(
             Transaction.delivery_method == DeliveryMethod.FREE_COURIER,
             Transaction.transaction_status == TransactionStatus.DELIVERING,
-            Transaction.transaction_id.not_in(assigned_transaction_ids),
+            Delivery.delivery_status == DeliveryStatus.PENDING,
+            Delivery.courier_id.is_(None),
+            Delivery.pickup_address.is_not(None),
+            Delivery.receiver_address.is_not(None),
         )
         .order_by(Transaction.requested_at)
     )
@@ -94,23 +99,25 @@ def accept_delivery_task(
     ):
         raise DeliveryTaskNotFoundError
 
-    existing_delivery = db.scalar(
-        select(Delivery.delivery_id).where(Delivery.transaction_id == transaction.transaction_id)
+    delivery = db.scalar(
+        select(Delivery)
+        .where(
+            Delivery.transaction_id == transaction.transaction_id,
+            Delivery.delivery_status == DeliveryStatus.PENDING,
+            Delivery.courier_id.is_(None),
+            Delivery.pickup_address.is_not(None),
+        )
+        .with_for_update()
     )
-    if existing_delivery is not None:
+    if delivery is None:
         raise InvalidDeliveryStateError
 
     now = datetime.now(UTC)
-    delivery = Delivery(
-        transaction_id=transaction.transaction_id,
-        courier_id=courier.courier_id,
-        pickup_address=payload.pickup_address,
-        receiver_address=payload.receiver_address,
-        delivery_status=DeliveryStatus.ASSIGNED,
-        assigned_at=now,
-    )
+    delivery.courier_id = courier.courier_id
+    delivery.delivery_status = DeliveryStatus.ASSIGNED
+    delivery.assigned_at = now
+    delivery.expected_delivery_at = payload.expected_delivery_at
     courier.courier_status = CourierStatus.BUSY
-    db.add(delivery)
     db.flush()
     db.add(
         ActivityLog(
