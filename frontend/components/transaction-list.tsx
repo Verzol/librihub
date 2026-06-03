@@ -72,14 +72,11 @@ export function TransactionList({
 
   useEffect(() => {
     if (!token || initial.length === 0) return;
-    const missingIds = Array.from(new Set(initial.map((tx) => tx.book_id))).filter(
-      (id) => !books[id]
-    );
-    if (missingIds.length === 0) return;
+    const bookIds = Array.from(new Set(initial.map((tx) => tx.book_id)));
 
     let cancelled = false;
     Promise.all(
-      missingIds.map((id) => booksApi.detail(token, id).then((book) => [id, book] as const))
+      bookIds.map((id) => booksApi.detail(token, id).then((book) => [id, book] as const))
     )
       .then((entries) => {
         if (cancelled) return;
@@ -92,7 +89,7 @@ export function TransactionList({
     return () => {
       cancelled = true;
     };
-  }, [token, initial, books]);
+  }, [token, initial]);
 
   useEffect(() => {
     if (!token || initial.length === 0) return;
@@ -200,6 +197,18 @@ export function TransactionList({
     }
   }
 
+  async function publishBook(bookId: number) {
+    if (!token) return;
+    try {
+      setError("");
+      const updated = await booksApi.publish(token, bookId);
+      setBooks((current) => ({ ...current, [bookId]: updated }));
+      await onChanged();
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
   if (initial.length === 0) {
     return (
       <EmptyState title="Chưa có giao dịch">
@@ -257,6 +266,7 @@ export function TransactionList({
             reviewsByTransaction={reviewsByTransaction}
             usersById={usersById}
             onAction={run}
+            onPublishBook={publishBook}
             onReviewCreated={(transactionId, review) =>
               setReviewsByTransaction((current) => ({
                 ...current,
@@ -271,6 +281,7 @@ export function TransactionList({
             reviewsByTransaction={reviewsByTransaction}
             usersById={usersById}
             onAction={run}
+            onPublishBook={publishBook}
             onReviewCreated={(transactionId, review) =>
               setReviewsByTransaction((current) => ({
                 ...current,
@@ -285,6 +296,7 @@ export function TransactionList({
             reviewsByTransaction={reviewsByTransaction}
             usersById={usersById}
             onAction={run}
+            onPublishBook={publishBook}
             onReviewCreated={(transactionId, review) =>
               setReviewsByTransaction((current) => ({
                 ...current,
@@ -299,6 +311,7 @@ export function TransactionList({
             reviewsByTransaction={reviewsByTransaction}
             usersById={usersById}
             onAction={run}
+            onPublishBook={publishBook}
             onReviewCreated={(transactionId, review) =>
               setReviewsByTransaction((current) => ({
                 ...current,
@@ -314,6 +327,7 @@ export function TransactionList({
             reviewsByTransaction={reviewsByTransaction}
             usersById={usersById}
             onAction={run}
+            onPublishBook={publishBook}
             onReviewCreated={(transactionId, review) =>
               setReviewsByTransaction((current) => ({
                 ...current,
@@ -341,6 +355,7 @@ function TransactionSection({
   reviewsByTransaction,
   usersById,
   onAction,
+  onPublishBook,
   onReviewCreated,
   compact = false
 }: {
@@ -350,6 +365,7 @@ function TransactionSection({
   reviewsByTransaction: Record<number, Review[]>;
   usersById: Record<number, PublicUserSummary>;
   onAction: (id: number, action: TransactionAction, payload?: TransactionActionPayload) => Promise<void>;
+  onPublishBook: (bookId: number) => Promise<void>;
   onReviewCreated: (transactionId: number, review: Review) => void;
   compact?: boolean;
 }) {
@@ -366,6 +382,7 @@ function TransactionSection({
             reviews={reviewsByTransaction[tx.transaction_id] ?? []}
             usersById={usersById}
             onAction={onAction}
+            onPublishBook={onPublishBook}
             onReviewCreated={(review) => onReviewCreated(tx.transaction_id, review)}
             compact={compact}
           />
@@ -381,6 +398,7 @@ function TransactionCard({
   reviews,
   usersById,
   onAction,
+  onPublishBook,
   onReviewCreated,
   compact
 }: {
@@ -389,6 +407,7 @@ function TransactionCard({
   reviews: Review[];
   usersById: Record<number, PublicUserSummary>;
   onAction: (id: number, action: TransactionAction, payload?: TransactionActionPayload) => Promise<void>;
+  onPublishBook: (bookId: number) => Promise<void>;
   onReviewCreated: (review: Review) => void;
   compact: boolean;
 }) {
@@ -487,9 +506,11 @@ function TransactionCard({
           <PointDelta value={pointDelta} completed={transaction.transaction_status === "COMPLETED"} />
           <ActionButtons
             transaction={transaction}
+            book={book}
             isOwner={isOwner}
             isRequester={isRequester}
             onAction={onAction}
+            onPublishBook={onPublishBook}
           />
         </div>
       </div>
@@ -579,14 +600,18 @@ function TransactionCard({
 
 function ActionButtons({
   transaction,
+  book,
   isOwner,
   isRequester,
-  onAction
+  onAction,
+  onPublishBook
 }: {
   transaction: Transaction;
+  book?: Book;
   isOwner: boolean;
   isRequester: boolean;
   onAction: (id: number, action: TransactionAction, payload?: TransactionActionPayload) => Promise<void>;
+  onPublishBook: (bookId: number) => Promise<void>;
 }) {
   const id = transaction.transaction_id;
   const [pickupLocationId, setPickupLocationId] = useState(DELIVERY_LOCATIONS[0].id);
@@ -605,6 +630,11 @@ function ActionButtons({
     isRequester &&
     (transaction.transaction_status === "ACCEPTED" ||
       (transaction.transaction_status === "DELIVERING" && transaction.courier_confirmed));
+  const canPublishReturnedBook =
+    transaction.transaction_type === "BORROW_RETURN" &&
+    transaction.transaction_status === "COMPLETED" &&
+    isOwner &&
+    book?.book_status === "UNLISTED";
   const pickupLocation = getDeliveryLocation(pickupLocationId);
 
   return (
@@ -687,6 +717,17 @@ function ActionButtons({
         {transaction.transaction_type === "BORROW_RETURN" && isOwner && transaction.transaction_status === "RETURN_PENDING" ? (
           <ConfirmButton size="sm" confirm="Xác nhận đã nhận lại sách? Điểm sẽ được quyết toán." onConfirm={() => onAction(id, "confirm-return")}>
             Xác nhận đã nhận lại
+          </ConfirmButton>
+        ) : null}
+
+        {canPublishReturnedBook ? (
+          <ConfirmButton
+            size="sm"
+            confirm="Bạn có muốn đăng lại sách này để người khác tiếp tục yêu cầu không?"
+            onConfirm={() => onPublishBook(transaction.book_id)}
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            Đăng lại sách
           </ConfirmButton>
         ) : null}
       </div>

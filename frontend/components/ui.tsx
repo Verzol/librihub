@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { Loader2 } from "lucide-react";
+import { AlertTriangle, Loader2, X } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
@@ -60,15 +61,109 @@ export function ConfirmButton({
   confirm,
   onConfirm,
   children,
+  variant,
+  size,
+  className,
+  disabled,
+  loading,
   ...props
 }: ButtonProps & { confirm: string; onConfirm: () => Promise<void> | void }) {
-  async function handleClick() {
-    if (window.confirm(confirm)) await onConfirm();
-  }
+  const [open, setOpen] = useState(false);
+  const [pending, setPending] = useState(false);
+
+  const handleConfirm = useCallback(async () => {
+    if (pending) return;
+    try {
+      setPending(true);
+      await onConfirm();
+      setOpen(false);
+    } finally {
+      setPending(false);
+    }
+  }, [onConfirm, pending]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        void handleConfirm();
+      }
+      if (event.key === "Escape" && !pending) {
+        setOpen(false);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleConfirm, open, pending]);
+
   return (
-    <Button type="button" onClick={handleClick} {...props}>
-      {children}
-    </Button>
+    <>
+      <Button
+        type="button"
+        variant={variant}
+        size={size}
+        className={className}
+        disabled={disabled}
+        loading={loading}
+        onClick={() => setOpen(true)}
+        {...props}
+      >
+        {children}
+      </Button>
+      {open ? (
+        <div
+          className="fixed inset-x-0 top-0 z-[130] flex h-[100dvh] items-center justify-center overflow-y-auto bg-slate-950/45 px-5 py-10 backdrop-blur-sm"
+          role="presentation"
+          onMouseDown={() => setOpen(false)}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="confirm-dialog-title"
+            className="my-auto w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_32px_90px_rgba(15,23,42,0.24)]"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start gap-4">
+              <div
+                className={cn(
+                  "flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-2xl",
+                  variant === "danger" ? "bg-red-50 text-red-600" : "bg-blue-50 text-blue-700"
+                )}
+              >
+                <AlertTriangle className="h-5 w-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-start justify-between gap-3">
+                  <h2 id="confirm-dialog-title" className="text-lg font-bold text-slate-950">
+                    Xác nhận thao tác
+                  </h2>
+                  <button
+                    type="button"
+                    aria-label="Đóng"
+                    onClick={() => setOpen(false)}
+                    className="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                <p className="mt-2 text-sm leading-6 text-slate-600">{confirm}</p>
+              </div>
+            </div>
+            <div className="mt-6 flex justify-end gap-2">
+              <Button type="button" variant="secondary" onClick={() => setOpen(false)} disabled={pending}>
+                Hủy
+              </Button>
+              <Button type="button" variant={variant === "danger" ? "danger" : "primary"} onClick={handleConfirm} loading={pending}>
+                Xác nhận
+              </Button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+    </>
   );
 }
 

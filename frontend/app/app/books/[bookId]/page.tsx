@@ -1,15 +1,29 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { booksApi, reviewsApi, transactionsApi } from "@/lib/api";
+import {
+  BookOpen,
+  Check,
+  ChevronRight,
+  Edit3,
+  Handshake,
+  PackageCheck,
+  RotateCcw,
+  Send,
+  Star,
+  Trash2,
+  Truck,
+  Wallet
+} from "lucide-react";
+import { authApi, booksApi, reviewsApi, transactionsApi } from "@/lib/api";
 import { errorMessage } from "@/lib/api/client";
-import type { Book, DeliveryMethod, Review, TransactionType } from "@/lib/api/types";
+import type { Book, DeliveryMethod, PublicUserSummary, Review, TransactionType } from "@/lib/api/types";
 import { useAuth } from "@/lib/auth";
 import { DELIVERY_LOCATIONS, FREE_COURIER_RADIUS_LABEL, getDeliveryLocation } from "@/lib/delivery-locations";
-import { formatDate } from "@/lib/utils";
-import { Alert, Badge, Card, ConfirmButton, Field, LinkButton, LoadingState, PageHeader, Select, TextInput } from "@/components/ui";
+import { cn, formatDate } from "@/lib/utils";
+import { Alert, Badge, ConfirmButton, LinkButton, LoadingState } from "@/components/ui";
 
 export default function BookDetailPage() {
   const params = useParams<{ bookId: string }>();
@@ -17,20 +31,34 @@ export default function BookDetailPage() {
   const { token, user } = useAuth();
   const bookId = Number(params.bookId);
   const [book, setBook] = useState<Book | null>(null);
+  const [owner, setOwner] = useState<PublicUserSummary | null>(null);
   const [reviews, setReviews] = useState<Review[]>([]);
-  const [selectedTransactionType, setSelectedTransactionType] = useState<TransactionType>(
-    book?.exchange_mode === "PERMANENT_EXCHANGE" ? "PERMANENT_EXCHANGE" : "BORROW_RETURN"
-  );
+  const [relatedBooks, setRelatedBooks] = useState<Book[]>([]);
+  const [selectedTransactionType, setSelectedTransactionType] = useState<TransactionType>("BORROW_RETURN");
   const [selectedDeliveryMethod, setSelectedDeliveryMethod] = useState<DeliveryMethod>("DIRECT_CONTACT");
   const [selectedReceiverLocationId, setSelectedReceiverLocationId] = useState(DELIVERY_LOCATIONS[0].id);
+  const [borrowDays, setBorrowDays] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
   async function load() {
     try {
-      const [bookData, reviewData] = await Promise.all([booksApi.detail(token, bookId), token ? reviewsApi.forBook(token, bookId) : Promise.resolve([])]);
+      setError("");
+      const [bookData, reviewData] = await Promise.all([
+        booksApi.detail(token, bookId),
+        token ? reviewsApi.forBook(token, bookId) : Promise.resolve([])
+      ]);
       setBook(bookData);
       setReviews(reviewData);
+
+      if (token) {
+        authApi.summary(token, bookData.owner_id).then(setOwner).catch(() => setOwner(null));
+      }
+
+      booksApi
+        .list(token, `?category_id=${bookData.category_id}`)
+        .then((items) => setRelatedBooks(items.filter((item) => item.book_id !== bookData.book_id).slice(0, 3)))
+        .catch(() => setRelatedBooks([]));
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -47,10 +75,19 @@ export default function BookDetailPage() {
     );
   }, [book?.exchange_mode]);
 
+  const averageRating = useMemo(() => {
+    if (reviews.length === 0) return null;
+    return reviews.reduce((sum, review) => sum + review.rating_score, 0) / reviews.length;
+  }, [reviews]);
+
   if (!book) return <LoadingState />;
 
   const isOwner = user?.user_id === book.owner_id;
   const requestable = Boolean(token && !isOwner && book.book_status === "AVAILABLE");
+  const requestCost = selectedTransactionType === "PERMANENT_EXCHANGE" ? 10 : 5;
+  const remainingPoints = (user?.current_points ?? 0) - requestCost;
+  const canExchange = book.exchange_mode !== "BORROW_RETURN";
+  const canBorrow = book.exchange_mode !== "PERMANENT_EXCHANGE";
 
   async function removeBook() {
     if (!token) return;
@@ -95,149 +132,542 @@ export default function BookDetailPage() {
   }
 
   return (
-    <>
-      <PageHeader
-        title={book.title}
-        description={`${book.author} ${book.publication_year ? `- ${book.publication_year}` : ""}`}
-        actions={
-          isOwner ? (
-            <>
-              <Link className="text-sm font-semibold text-blue-700 hover:text-blue-800" href={`/app/books/${bookId}/edit`}>
-                Sửa
-              </Link>
-              {book.book_status === "UNLISTED" ? (
-                <ConfirmButton confirm="Bạn có muốn đăng lại sách này không?" onConfirm={publishBook}>
-                  Đăng lại
-                </ConfirmButton>
-              ) : null}
-              {book.book_status === "AVAILABLE" ? (
-                <ConfirmButton variant="danger" confirm="Bạn có muốn gỡ sách này khỏi danh sách không?" onConfirm={removeBook}>
-                  Gỡ sách
-                </ConfirmButton>
-              ) : null}
-            </>
-          ) : null
-        }
-      />
-      <div className="grid grid-cols-[2fr_1fr] gap-4 max-lg:grid-cols-1">
-        <Card>
-          <div className="mb-4 flex aspect-[16/9] items-center justify-center overflow-hidden rounded-2xl bg-blue-50">
-            {book.cover_image_url ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={book.cover_image_url} alt={book.title} className="h-full w-full object-cover" />
-            ) : (
-              <div className="flex h-full items-center justify-center text-5xl">📚</div>
-            )}
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Badge value={book.book_status} />
-            <Badge value={book.exchange_mode} />
-            <Badge value={book.book_condition} />
-            {book.category ? <Badge value={book.category.category_name} /> : null}
-          </div>
-          <div className="mt-5 rounded-2xl bg-slate-50 p-4">
-            <h2 className="text-sm font-bold text-slate-950">Mô tả sách</h2>
-            <p className="mt-2 whitespace-pre-line text-sm leading-6 text-slate-600">
-              {book.book_description || "Chủ sách chưa thêm mô tả."}
-            </p>
-          </div>
-        </Card>
-        <div className="flex flex-col gap-4">
-          {!token ? (
-            <Card>
-              <h2 className="text-sm font-semibold text-slate-900">Muốn yêu cầu cuốn sách này?</h2>
-              <p className="mt-2 text-sm leading-6 text-slate-500">
-                Khách có thể xem thông tin sách. Để gửi yêu cầu mượn hoặc trao đổi, bạn cần đăng nhập hoặc tạo tài khoản thành viên.
-              </p>
-              <div className="mt-4 flex flex-wrap gap-2">
-                <LinkButton href="/login">Đăng nhập</LinkButton>
-                <LinkButton href="/register" variant="secondary">Đăng ký</LinkButton>
-              </div>
-            </Card>
-          ) : requestable ? (
-            <Card>
-              <h2 className="text-sm font-semibold text-slate-900">Yêu cầu giao dịch</h2>
-              <form id="request-form" className="mt-4 flex flex-col gap-3" onSubmit={onSubmit}>
-                {error ? <Alert variant="error">{error}</Alert> : null}
-                {message ? <Alert variant="success">{message}</Alert> : null}
-                <Field label="Loại giao dịch">
-                  <Select
-                    name="transaction_type"
-                    value={selectedTransactionType}
-                    onChange={(event) => setSelectedTransactionType(event.target.value as TransactionType)}
-                  >
-                    {book.exchange_mode !== "BORROW_RETURN" ? <option value="PERMANENT_EXCHANGE">Trao đổi vĩnh viễn</option> : null}
-                    {book.exchange_mode !== "PERMANENT_EXCHANGE" ? <option value="BORROW_RETURN">Mượn trả</option> : null}
-                  </Select>
-                </Field>
-                <Field label="Số ngày mượn">
-                  <TextInput
-                    name="borrow_duration_days"
-                    type="number"
-                    min={1}
-                    required={selectedTransactionType === "BORROW_RETURN"}
-                    disabled={selectedTransactionType !== "BORROW_RETURN"}
-                    placeholder={selectedTransactionType === "BORROW_RETURN" ? "Ví dụ: 14" : "Không áp dụng cho trao đổi"}
-                  />
-                  <span className="text-xs leading-5 text-slate-500">
-                    Mượn trả luôn cần hạn trả, kể cả khi hai bên tự liên hệ và giao sách trực tiếp.
-                  </span>
-                </Field>
-                <Field label="Giao nhận">
-                  <Select
-                    name="delivery_method"
-                    value={selectedDeliveryMethod}
-                    onChange={(event) => setSelectedDeliveryMethod(event.target.value as DeliveryMethod)}
-                  >
-                    <option value="DIRECT_CONTACT">Liên hệ trực tiếp</option>
-                    <option value="FREE_COURIER">Dịch vụ giao sách miễn phí</option>
-                  </Select>
-                </Field>
-                {selectedDeliveryMethod === "FREE_COURIER" ? (
-                  <Field label="Điểm nhận sách">
-                    <Select
-                      name="receiver_location_id"
-                      value={selectedReceiverLocationId}
-                      onChange={(event) => setSelectedReceiverLocationId(event.target.value)}
-                    >
-                      {DELIVERY_LOCATIONS.map((location) => (
-                        <option key={location.id} value={location.id}>
-                          {location.label}
-                        </option>
-                      ))}
-                    </Select>
-                    <span className="text-xs leading-5 text-slate-500">
-                      {FREE_COURIER_RADIUS_LABEL}. Nếu muốn giao ngoài khu vực này, hai bên nên tự liên hệ hoặc đặt ship ngoài.
-                    </span>
-                  </Field>
-                ) : null}
-                <ConfirmButton
-                  confirm="Bạn có muốn gửi yêu cầu giao dịch cho sách này không?"
-                  onConfirm={() => {
-                    const form = document.getElementById("request-form") as HTMLFormElement | null;
-                    if (form?.reportValidity()) void requestTransaction(form);
-                  }}
-                >
-                  Gửi yêu cầu
-                </ConfirmButton>
-              </form>
-            </Card>
-          ) : null}
-          <Card>
-            <h2 className="text-sm font-semibold text-slate-900">Đánh giá sách</h2>
-            <div className="mt-3 flex flex-col gap-3">
-              {reviews.length === 0 ? <p className="text-sm text-slate-500">Chưa có đánh giá.</p> : null}
-              {reviews.map((review) => (
-                <div key={review.review_id} className="rounded-2xl border border-slate-200 bg-white p-3 text-sm shadow-sm">
-                  <div className="font-medium text-amber-500">{review.rating_score}/5 sao</div>
-                  <p className="mt-1 text-slate-700">{review.review_content || "Không có nội dung"}</p>
-                  <p className="mt-1 text-xs text-slate-500">{formatDate(review.created_at)}</p>
-                </div>
+    <div className="space-y-7">
+      <nav className="flex flex-wrap items-center gap-1 text-xs font-semibold text-slate-400">
+        <Link href="/app/books" className="transition-colors hover:text-blue-700">
+          Khám phá sách
+        </Link>
+        <ChevronRight className="h-3.5 w-3.5" />
+        {book.category ? (
+          <>
+            <span>{book.category.category_name}</span>
+            <ChevronRight className="h-3.5 w-3.5" />
+          </>
+        ) : null}
+        <span className="text-slate-500">{book.title}</span>
+      </nav>
+
+      {error ? <Alert variant="error">{error}</Alert> : null}
+      {message ? <Alert variant="success">{message}</Alert> : null}
+
+      <section className="grid grid-cols-[220px_minmax(0,1fr)_360px] gap-6 max-xl:grid-cols-[190px_minmax(0,1fr)] max-lg:grid-cols-1">
+        <aside className="max-xl:row-span-1">
+          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-blue-50 shadow-[0_12px_34px_rgba(15,23,42,0.08)]">
+            <div className="flex aspect-[3/4] items-center justify-center overflow-hidden bg-blue-50">
+              {book.cover_image_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={book.cover_image_url} alt={book.title} className="h-full w-full object-cover" />
+              ) : (
+                <BookOpen className="h-16 w-16 text-blue-300" />
+              )}
+            </div>
+            <div className="grid grid-cols-3 gap-2 border-t border-slate-200 bg-white p-3">
+              {[book.book_status, book.exchange_mode, book.book_condition].map((value) => (
+                <div key={value} className="h-10 rounded-xl bg-blue-50" />
               ))}
             </div>
-          </Card>
-        </div>
-      </div>
-    </>
+          </div>
+        </aside>
+
+        <main className="min-w-0">
+          <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 pb-4">
+            <div className="min-w-0">
+              <h1 className="text-3xl font-black tracking-normal text-slate-950 max-md:text-2xl">{book.title}</h1>
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-slate-500">
+                <span>{book.author}</span>
+                {book.publication_year ? (
+                  <>
+                    <span>•</span>
+                    <span>{book.publication_year}</span>
+                  </>
+                ) : null}
+                {averageRating ? (
+                  <>
+                    <span>•</span>
+                    <Stars value={Math.round(averageRating)} />
+                    <span>({reviews.length} đánh giá)</span>
+                  </>
+                ) : null}
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {book.category ? <SoftPill>{book.category.category_name}</SoftPill> : null}
+                <SoftPill tone="blue">{exchangeModeText(book.exchange_mode)}</SoftPill>
+                <SoftPill tone="emerald">{conditionText(book.book_condition)}</SoftPill>
+                <Badge value={book.book_status} />
+              </div>
+            </div>
+
+            {isOwner ? (
+              <div className="flex flex-wrap gap-2">
+                <Link
+                  href={`/app/books/${bookId}/edit`}
+                  className="inline-flex h-9 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-sm font-bold text-slate-700 shadow-sm transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+                >
+                  <Edit3 className="h-4 w-4" />
+                  Sửa
+                </Link>
+                {book.book_status === "UNLISTED" ? (
+                  <ConfirmButton size="sm" confirm="Bạn có muốn đăng lại sách này không?" onConfirm={publishBook}>
+                    <RotateCcw className="h-4 w-4" />
+                    Đăng lại
+                  </ConfirmButton>
+                ) : null}
+                {book.book_status === "AVAILABLE" ? (
+                  <ConfirmButton
+                    size="sm"
+                    variant="danger"
+                    confirm="Bạn có muốn gỡ sách này khỏi danh sách không?"
+                    onConfirm={removeBook}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Gỡ sách
+                  </ConfirmButton>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="divide-y divide-slate-200 text-sm">
+            <DetailRow label="Tình trạng vật lý" value={conditionText(book.book_condition)} />
+            <DetailRow label="Hình thức" value={exchangeModeLongText(book.exchange_mode)} />
+            <DetailRow label="Điểm cần" value={`Trao đổi: 10 điểm • Mượn: 5 điểm`} />
+            <DetailRow
+              label="Chủ sách"
+              value={`${owner?.full_name ?? `Thành viên #${book.owner_id}`}${owner ? ` • ${owner.current_points} điểm • tham gia ${formatDate(owner.joined_at)}` : ""}`}
+            />
+            <DetailRow label="Danh mục" value={book.category?.category_name ?? "Chưa phân loại"} />
+            <DetailRow label="Đăng ngày" value={formatDate(book.created_at)} />
+          </div>
+
+          <section className="mt-6">
+            <h2 className="mb-2 text-base font-black text-slate-950">Mô tả sách</h2>
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <p className="whitespace-pre-line text-sm leading-7 text-slate-600">
+                {book.book_description || "Chủ sách chưa thêm mô tả."}
+              </p>
+            </div>
+          </section>
+
+          <section className="mt-6">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <h2 className="text-base font-black text-slate-950">Đánh giá về chủ sách</h2>
+              {reviews.length > 2 ? (
+                <span className="text-xs font-bold text-blue-700">Xem tất cả {reviews.length} đánh giá</span>
+              ) : null}
+            </div>
+            {reviews.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-4 text-sm text-slate-500">
+                Chưa có đánh giá cho sách này.
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-3 max-md:grid-cols-1">
+                {reviews.slice(0, 2).map((review, index) => (
+                  <ReviewCard key={review.review_id} review={review} index={index} />
+                ))}
+              </div>
+            )}
+          </section>
+        </main>
+
+        <aside className="max-xl:col-span-2 max-lg:col-span-1">
+          <RequestPanel
+            token={token}
+            isOwner={isOwner}
+            requestable={requestable}
+            canExchange={canExchange}
+            canBorrow={canBorrow}
+            selectedTransactionType={selectedTransactionType}
+            selectedDeliveryMethod={selectedDeliveryMethod}
+            selectedReceiverLocationId={selectedReceiverLocationId}
+            borrowDays={borrowDays}
+            requestCost={requestCost}
+            remainingPoints={remainingPoints}
+            onTransactionTypeChange={setSelectedTransactionType}
+            onDeliveryMethodChange={setSelectedDeliveryMethod}
+            onReceiverLocationChange={setSelectedReceiverLocationId}
+            onBorrowDaysChange={setBorrowDays}
+            onSubmit={onSubmit}
+            onConfirmRequest={() => {
+              const form = document.getElementById("request-form") as HTMLFormElement | null;
+              if (form?.reportValidity()) void requestTransaction(form);
+            }}
+          />
+        </aside>
+      </section>
+
+      <section>
+        <h2 className="mb-3 text-lg font-black text-slate-950">Sách tương tự</h2>
+        {relatedBooks.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-4 text-sm text-slate-500">
+            Chưa có sách tương tự trong cùng danh mục.
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-4 max-lg:grid-cols-2 max-sm:grid-cols-1">
+            {relatedBooks.map((item) => (
+              <Link
+                key={item.book_id}
+                href={`/app/books/${item.book_id}`}
+                className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm transition-all hover:-translate-y-0.5 hover:border-blue-200 hover:bg-blue-50/40"
+              >
+                <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-blue-50 text-blue-700">
+                  {item.cover_image_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={item.cover_image_url} alt={item.title} className="h-full w-full object-cover" />
+                  ) : (
+                    <BookOpen className="h-5 w-5" />
+                  )}
+                </div>
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-black text-slate-900">{item.title}</div>
+                  <div className="truncate text-xs text-slate-500">{item.author}</div>
+                  <div className="mt-1">
+                    <Badge value={item.book_status} />
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
   );
+}
+
+function RequestPanel({
+  token,
+  isOwner,
+  requestable,
+  canExchange,
+  canBorrow,
+  selectedTransactionType,
+  selectedDeliveryMethod,
+  selectedReceiverLocationId,
+  borrowDays,
+  requestCost,
+  remainingPoints,
+  onTransactionTypeChange,
+  onDeliveryMethodChange,
+  onReceiverLocationChange,
+  onBorrowDaysChange,
+  onSubmit,
+  onConfirmRequest
+}: {
+  token: string | null;
+  isOwner: boolean;
+  requestable: boolean;
+  canExchange: boolean;
+  canBorrow: boolean;
+  selectedTransactionType: TransactionType;
+  selectedDeliveryMethod: DeliveryMethod;
+  selectedReceiverLocationId: string;
+  borrowDays: string;
+  requestCost: number;
+  remainingPoints: number;
+  onTransactionTypeChange: (value: TransactionType) => void;
+  onDeliveryMethodChange: (value: DeliveryMethod) => void;
+  onReceiverLocationChange: (value: string) => void;
+  onBorrowDaysChange: (value: string) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onConfirmRequest: () => void;
+}) {
+  if (!token) {
+    return (
+      <Panel>
+        <h2 className="text-base font-black text-slate-950">Yêu cầu giao dịch</h2>
+        <p className="mt-3 text-sm leading-6 text-slate-500">
+          Đăng nhập để gửi yêu cầu mượn hoặc trao đổi sách với thành viên đang sở hữu.
+        </p>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <LinkButton href="/login">Đăng nhập</LinkButton>
+          <LinkButton href="/register" variant="secondary">
+            Đăng ký
+          </LinkButton>
+        </div>
+      </Panel>
+    );
+  }
+
+  if (isOwner) {
+    return (
+      <Panel>
+        <h2 className="text-base font-black text-slate-950">Sách của bạn</h2>
+        <p className="mt-3 text-sm leading-6 text-slate-500">
+          Bạn là chủ sách nên không thể gửi yêu cầu giao dịch cho chính sách này.
+        </p>
+      </Panel>
+    );
+  }
+
+  if (!requestable) {
+    return (
+      <Panel>
+        <h2 className="text-base font-black text-slate-950">Yêu cầu giao dịch</h2>
+        <p className="mt-3 text-sm leading-6 text-slate-500">
+          Sách hiện chưa khả dụng để tạo yêu cầu mới.
+        </p>
+      </Panel>
+    );
+  }
+
+  return (
+    <Panel>
+      <h2 className="text-base font-black text-slate-950">Yêu cầu giao dịch</h2>
+      <form id="request-form" className="mt-4 space-y-5" onSubmit={onSubmit}>
+        <input type="hidden" name="transaction_type" value={selectedTransactionType} />
+        <input type="hidden" name="delivery_method" value={selectedDeliveryMethod} />
+        <input type="hidden" name="receiver_location_id" value={selectedReceiverLocationId} />
+
+        <div>
+          <Label>Chọn hình thức</Label>
+          <div className="mt-2 grid gap-2">
+            {canExchange ? (
+              <ChoiceCard
+                active={selectedTransactionType === "PERMANENT_EXCHANGE"}
+                icon={<PackageCheck className="h-4 w-4" />}
+                title="Trao đổi vĩnh viễn"
+                subtitle="-10 điểm của bạn"
+                onClick={() => onTransactionTypeChange("PERMANENT_EXCHANGE")}
+              />
+            ) : null}
+            {canBorrow ? (
+              <ChoiceCard
+                active={selectedTransactionType === "BORROW_RETURN"}
+                icon={<BookOpen className="h-4 w-4" />}
+                title="Cho mượn"
+                subtitle="-5 điểm của bạn"
+                onClick={() => onTransactionTypeChange("BORROW_RETURN")}
+              />
+            ) : null}
+          </div>
+        </div>
+
+        {selectedTransactionType === "BORROW_RETURN" ? (
+          <div>
+            <Label>Số ngày mượn</Label>
+            <input
+              name="borrow_duration_days"
+              type="number"
+              min={1}
+              required
+              value={borrowDays}
+              onChange={(event) => onBorrowDaysChange(event.target.value)}
+              placeholder="Ví dụ: 14"
+              className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
+            />
+          </div>
+        ) : null}
+
+        <div>
+          <Label>Phương thức nhận</Label>
+          <div className="mt-2 grid gap-2">
+            <ChoiceCard
+              active={selectedDeliveryMethod === "DIRECT_CONTACT"}
+              icon={<Handshake className="h-4 w-4" />}
+              title="Tự giao"
+              subtitle="Liên hệ trực tiếp"
+              onClick={() => onDeliveryMethodChange("DIRECT_CONTACT")}
+            />
+            <ChoiceCard
+              active={selectedDeliveryMethod === "FREE_COURIER"}
+              icon={<Truck className="h-4 w-4" />}
+              title="Dịch vụ giao sách"
+              subtitle="+2 điểm cho người giao"
+              tone="emerald"
+              onClick={() => onDeliveryMethodChange("FREE_COURIER")}
+            />
+          </div>
+        </div>
+
+        {selectedDeliveryMethod === "FREE_COURIER" ? (
+          <div>
+            <Label>Điểm nhận sách</Label>
+            <select
+              name="receiver_location_id_select"
+              value={selectedReceiverLocationId}
+              onChange={(event) => onReceiverLocationChange(event.target.value)}
+              className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
+            >
+              {DELIVERY_LOCATIONS.map((location) => (
+                <option key={location.id} value={location.id}>
+                  {location.label}
+                </option>
+              ))}
+            </select>
+            <p className="mt-2 text-xs leading-5 text-slate-500">{FREE_COURIER_RADIUS_LABEL}</p>
+          </div>
+        ) : null}
+
+        <div className="space-y-2 border-t border-slate-200 pt-4 text-sm">
+          <div className="flex items-center justify-between gap-3">
+            <span className="inline-flex items-center gap-2 text-slate-500">
+              <Wallet className="h-4 w-4" />
+              Điểm của bạn
+            </span>
+            <strong className="text-slate-950">{remainingPoints + requestCost} điểm</strong>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-slate-500">Sau giao dịch</span>
+            <strong className={cn(remainingPoints < 0 ? "text-red-600" : "text-blue-700")}>{remainingPoints} điểm</strong>
+          </div>
+        </div>
+
+        <ConfirmButton
+          className="w-full"
+          confirm="Bạn có muốn gửi yêu cầu giao dịch cho sách này không?"
+          onConfirm={onConfirmRequest}
+        >
+          <Send className="h-4 w-4" />
+          Gửi yêu cầu giao dịch
+        </ConfirmButton>
+        <p className="text-center text-xs leading-5 text-slate-400">
+          Yêu cầu sẽ được gửi tới chủ sách và chờ phê duyệt.
+        </p>
+      </form>
+    </Panel>
+  );
+}
+
+function Panel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_16px_42px_rgba(15,23,42,0.08)]">
+      {children}
+    </div>
+  );
+}
+
+function ChoiceCard({
+  active,
+  icon,
+  title,
+  subtitle,
+  tone = "blue",
+  onClick
+}: {
+  active: boolean;
+  icon: React.ReactNode;
+  title: string;
+  subtitle: string;
+  tone?: "blue" | "emerald";
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex items-center gap-3 rounded-2xl border bg-slate-50 px-3 py-3 text-left transition-all",
+        active && tone === "blue" && "border-blue-500 bg-blue-50 shadow-[0_0_0_3px_rgba(59,130,246,0.10)]",
+        active && tone === "emerald" && "border-emerald-500 bg-emerald-50 shadow-[0_0_0_3px_rgba(16,185,129,0.10)]",
+        !active && "border-slate-200 hover:border-blue-200 hover:bg-white"
+      )}
+    >
+      <span
+        className={cn(
+          "flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
+          active && tone === "blue" && "bg-blue-700 text-white",
+          active && tone === "emerald" && "bg-emerald-600 text-white",
+          !active && "bg-white text-slate-400"
+        )}
+      >
+        {active ? <Check className="h-4 w-4" /> : icon}
+      </span>
+      <span className="min-w-0">
+        <span className="block text-sm font-black text-slate-900">{title}</span>
+        <span className="block text-xs text-slate-500">{subtitle}</span>
+      </span>
+    </button>
+  );
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="grid grid-cols-[180px_minmax(0,1fr)] gap-4 py-3 max-sm:grid-cols-1 max-sm:gap-1">
+      <div className="text-slate-400">{label}</div>
+      <div className="font-semibold text-slate-700">{value}</div>
+    </div>
+  );
+}
+
+function ReviewCard({ review, index }: { review: Review; index: number }) {
+  const name = review.reviewer_full_name ?? `Thành viên ${index + 1}`;
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-50 text-sm font-black text-blue-700">
+            {name.charAt(0).toUpperCase()}
+          </div>
+          <div>
+            <div className="text-sm font-black text-slate-900">{name}</div>
+            <Stars value={review.rating_score} size="sm" />
+          </div>
+        </div>
+        <span className="text-xs text-slate-400">{formatDate(review.created_at)}</span>
+      </div>
+      <p className="mt-3 text-sm leading-6 text-slate-600">
+        “{review.review_content || "Không có nội dung đánh giá."}”
+      </p>
+    </div>
+  );
+}
+
+function Stars({ value, size = "md" }: { value: number; size?: "sm" | "md" }) {
+  return (
+    <span className="inline-flex items-center gap-0.5 text-amber-400">
+      {[1, 2, 3, 4, 5].map((score) => (
+        <Star
+          key={score}
+          className={cn(
+            size === "sm" ? "h-3.5 w-3.5" : "h-4 w-4",
+            score <= value ? "fill-amber-400" : "fill-transparent text-slate-300"
+          )}
+        />
+      ))}
+    </span>
+  );
+}
+
+function Label({ children }: { children: React.ReactNode }) {
+  return <div className="text-xs font-black text-slate-500">{children}</div>;
+}
+
+function SoftPill({ children, tone = "slate" }: { children: React.ReactNode; tone?: "slate" | "blue" | "emerald" }) {
+  const styles = {
+    slate: "border-slate-200 bg-slate-50 text-slate-600",
+    blue: "border-blue-200 bg-blue-50 text-blue-700",
+    emerald: "border-emerald-200 bg-emerald-50 text-emerald-700"
+  };
+  return (
+    <span className={cn("inline-flex h-7 items-center rounded-full border px-3 text-xs font-bold", styles[tone])}>
+      {children}
+    </span>
+  );
+}
+
+function conditionText(value: string) {
+  const labels: Record<string, string> = {
+    NEW: "Mới",
+    GOOD: "Tốt",
+    FAIR: "Khá",
+    WORN: "Cũ"
+  };
+  return labels[value] ?? value;
+}
+
+function exchangeModeText(value: string) {
+  const labels: Record<string, string> = {
+    PERMANENT_EXCHANGE: "Trao đổi",
+    BORROW_RETURN: "Cho mượn",
+    BOTH: "Trao đổi / Cho mượn"
+  };
+  return labels[value] ?? value;
+}
+
+function exchangeModeLongText(value: string) {
+  const labels: Record<string, string> = {
+    PERMANENT_EXCHANGE: "Trao đổi vĩnh viễn",
+    BORROW_RETURN: "Cho mượn có trả",
+    BOTH: "Trao đổi vĩnh viễn hoặc cho mượn tùy yêu cầu"
+  };
+  return labels[value] ?? value;
 }
