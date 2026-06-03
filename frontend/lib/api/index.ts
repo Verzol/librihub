@@ -23,13 +23,15 @@ import type {
   TransactionType,
   DeliveryMethod,
   User,
-  PublicUserSummary
+  PublicUserSummary,
+  UserNotification
 } from "./types";
 
 export const authApi = {
   register: (input: RegisterInput) => apiFetch<RegisterResponse>("/api/v1/auth/register", { method: "POST", body: input }),
   login: (input: LoginInput) => apiFetch<TokenResponse>("/api/v1/auth/login", { method: "POST", body: input }),
   me: (token: string) => apiFetch<User>("/api/v1/users/me", { token }),
+  notifications: (token: string) => apiFetch<UserNotification[]>("/api/v1/users/me/notifications", { token }),
   summary: (token: string, userId: number) => apiFetch<PublicUserSummary>(`/api/v1/users/${userId}/summary`, { token }),
   updateProfile: (token: string, input: Partial<RegisterInput>) =>
     apiFetch<User>("/api/v1/users/me/profile", { token, method: "PATCH", body: input }),
@@ -101,6 +103,7 @@ export const deliveriesApi = {
 export const reviewsApi = {
   create: (token: string, input: { transaction_id: number; reviewee_user_id: number; rating_score: number; review_content?: string | null; review_type: ReviewType }) =>
     apiFetch<Review>("/api/v1/reviews", { token, method: "POST", body: input }),
+  list: (token: string) => apiFetch<Review[]>("/api/v1/reviews", { token }),
   forUser: (token: string, userId: number) => apiFetch<Review[]>(`/api/v1/users/${userId}/reviews`, { token }),
   forBook: (token: string, bookId: number) => apiFetch<Review[]>(`/api/v1/books/${bookId}/reviews`, { token })
 };

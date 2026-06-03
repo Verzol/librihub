@@ -102,6 +102,13 @@ export type PublicUserSummary = {
   joined_at: string;
 };
 
+export type UserNotification = {
+  activity_id: number;
+  activity_type: string;
+  activity_description: string;
+  created_at: string;
+};
+
 export type RegisterResponse = {
   user: User;
   access_token: string;
@@ -155,8 +162,12 @@ export type BookInput = {
 export type Transaction = {
   transaction_id: number;
   book_id: number;
+  book_title: string | null;
+  book_author: string | null;
   owner_id: number;
+  owner_full_name: string | null;
   requester_id: number;
+  requester_full_name: string | null;
   transaction_type: TransactionType;
   delivery_method: DeliveryMethod;
   transaction_status: TransactionStatus;
@@ -225,7 +236,11 @@ export type Review = {
   review_id: number;
   transaction_id: number;
   reviewer_user_id: number;
+  reviewer_full_name: string | null;
   reviewee_user_id: number;
+  reviewee_full_name: string | null;
+  book_title: string | null;
+  book_author: string | null;
   rating_score: number;
   review_content: string | null;
   review_type: ReviewType;
