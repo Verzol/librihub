@@ -1,8 +1,9 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.delivery_area import is_courier_area_compatible
 from app.models.enums import (
     ActivityType,
     CourierStatus,
@@ -11,6 +12,7 @@ from app.models.enums import (
     PointLedgerReason,
     RoleInTransaction,
     TransactionStatus,
+    TransactionType,
 )
 from app.models.erd import ActivityLog, CourierProfile, Delivery, Transaction, User
 from app.modules.deliveries.schemas import DeliveryAcceptRequest
@@ -21,6 +23,7 @@ from app.modules.transactions.service import (
 )
 
 DELIVERY_REWARD_POINTS = 2
+MAX_EXPECTED_DELIVERY_DAYS = 3
 
 
 class CourierProfileRequiredError(Exception):
@@ -47,6 +50,10 @@ class InvalidDeliveryStateError(Exception):
     pass
 
 
+class InvalidDeliveryScheduleError(Exception):
+    pass
+
+
 def list_available_delivery_tasks(db: Session, current_user: User) -> list[Transaction]:
     courier = _get_current_courier(db, current_user)
     if courier.courier_status != CourierStatus.AVAILABLE:
@@ -64,7 +71,12 @@ def list_available_delivery_tasks(db: Session, current_user: User) -> list[Trans
         )
         .order_by(Transaction.requested_at)
     )
-    return list(db.scalars(statement))
+    return [
+        transaction
+        for transaction in db.scalars(statement)
+        if _is_ready_for_courier_assignment(transaction)
+        and _courier_can_handle_transaction(db, courier, transaction)
+    ]
 
 
 def list_my_deliveries(db: Session, current_user: User) -> list[Delivery]:
@@ -73,6 +85,18 @@ def list_my_deliveries(db: Session, current_user: User) -> list[Delivery]:
         select(Delivery)
         .where(Delivery.courier_id == courier.courier_id)
         .order_by(Delivery.assigned_at.desc(), Delivery.delivery_id.desc())
+    )
+    return list(db.scalars(statement))
+
+
+def list_user_deliveries(db: Session, user_id: int) -> list[Delivery]:
+    courier = db.scalar(select(CourierProfile).where(CourierProfile.user_id == user_id))
+    if courier is None:
+        return []
+    statement = (
+        select(Delivery)
+        .where(Delivery.courier_id == courier.courier_id)
+        .order_by(Delivery.delivered_at.desc(), Delivery.assigned_at.desc(), Delivery.delivery_id.desc())
     )
     return list(db.scalars(statement))
 
@@ -96,6 +120,8 @@ def accept_delivery_task(
         transaction is None
         or transaction.delivery_method != DeliveryMethod.FREE_COURIER
         or transaction.transaction_status != TransactionStatus.DELIVERING
+        or not _is_ready_for_courier_assignment(transaction)
+        or not _courier_can_handle_transaction(db, courier, transaction)
     ):
         raise DeliveryTaskNotFoundError
 
@@ -113,6 +139,7 @@ def accept_delivery_task(
         raise InvalidDeliveryStateError
 
     now = datetime.now(UTC)
+    _validate_expected_delivery_at(payload.expected_delivery_at, now)
     delivery.courier_id = courier.courier_id
     delivery.delivery_status = DeliveryStatus.ASSIGNED
     delivery.assigned_at = now
@@ -247,3 +274,46 @@ def _get_transaction_for_delivery(db: Session, delivery: Delivery) -> Transactio
     if transaction is None:
         raise DeliveryTaskNotFoundError
     return transaction
+
+
+def _is_ready_for_courier_assignment(transaction: Transaction) -> bool:
+    if transaction.transaction_type == TransactionType.PERMANENT_EXCHANGE:
+        return transaction.owner_confirmed and transaction.requester_confirmed
+    if transaction.transaction_type == TransactionType.BORROW_RETURN:
+        return True
+    return False
+
+
+def _courier_can_handle_transaction(
+    db: Session,
+    courier: CourierProfile,
+    transaction: Transaction,
+) -> bool:
+    delivery = db.scalar(
+        select(Delivery).where(Delivery.transaction_id == transaction.transaction_id)
+    )
+    if delivery is None:
+        return False
+    return is_courier_area_compatible(
+        courier.delivery_area,
+        delivery.pickup_address,
+        delivery.pickup_lat,
+        delivery.pickup_lng,
+        delivery.receiver_address,
+        delivery.receiver_lat,
+        delivery.receiver_lng,
+    )
+
+
+def _validate_expected_delivery_at(expected_delivery_at: datetime | None, now: datetime) -> None:
+    if expected_delivery_at is None:
+        return
+    expected = _as_utc(expected_delivery_at)
+    if expected < now or expected > now + timedelta(days=MAX_EXPECTED_DELIVERY_DAYS):
+        raise InvalidDeliveryScheduleError
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)

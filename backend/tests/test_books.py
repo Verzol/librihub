@@ -84,6 +84,7 @@ def test_create_search_update_and_soft_delete_book(client: TestClient) -> None:
     assert create_response.status_code == 201
     created = create_response.json()
     assert created["title"] == "Clean Architecture"
+    assert created["owner_full_name"] == "Book Owner"
     assert created["book_description"] == "A practical guide to software architecture boundaries."
     assert created["book_status"] == "AVAILABLE"
     assert created["category"]["category_name"] == "Technology"
@@ -91,6 +92,7 @@ def test_create_search_update_and_soft_delete_book(client: TestClient) -> None:
     list_response = client.get("/api/v1/books?q=Clean", headers=headers)
     assert list_response.status_code == 200
     assert [book["book_id"] for book in list_response.json()] == [created["book_id"]]
+    assert list_response.json()[0]["owner_full_name"] == "Book Owner"
 
     update_response = client.patch(
         f"/api/v1/books/{created['book_id']}",

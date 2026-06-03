@@ -5,23 +5,32 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   BookOpen,
+  CalendarDays,
   Check,
   ChevronRight,
   Edit3,
   Handshake,
+  LibraryBig,
   PackageCheck,
   RotateCcw,
   Send,
   Star,
   Trash2,
   Truck,
-  Wallet
+  UserRound,
+  Wallet,
+  type LucideIcon
 } from "lucide-react";
 import { authApi, booksApi, reviewsApi, transactionsApi } from "@/lib/api";
 import { errorMessage } from "@/lib/api/client";
 import type { Book, DeliveryMethod, PublicUserSummary, Review, TransactionType } from "@/lib/api/types";
 import { useAuth } from "@/lib/auth";
-import { DELIVERY_LOCATIONS, FREE_COURIER_RADIUS_LABEL, getDeliveryLocation } from "@/lib/delivery-locations";
+import {
+  DELIVERY_LOCATIONS,
+  FREE_COURIER_RADIUS_LABEL,
+  distanceFromUetKm,
+  getDeliveryLocation
+} from "@/lib/delivery-locations";
 import { cn, formatDate } from "@/lib/utils";
 import { Alert, Badge, ConfirmButton, LinkButton, LoadingState } from "@/components/ui";
 
@@ -88,6 +97,10 @@ export default function BookDetailPage() {
   const remainingPoints = (user?.current_points ?? 0) - requestCost;
   const canExchange = book.exchange_mode !== "BORROW_RETURN";
   const canBorrow = book.exchange_mode !== "PERMANENT_EXCHANGE";
+  const selectedReceiverLocation = getDeliveryLocation(selectedReceiverLocationId);
+  const ownerName = owner?.full_name ?? book.owner_full_name ?? `Thành viên #${book.owner_id}`;
+  const ownerJoinedAt = owner ? formatDateOnly(owner.joined_at) : null;
+  const ownerPoints = owner?.current_points;
 
   async function removeBook() {
     if (!token) return;
@@ -133,7 +146,7 @@ export default function BookDetailPage() {
 
   return (
     <div className="space-y-7">
-      <nav className="flex flex-wrap items-center gap-1 text-xs font-semibold text-slate-400">
+      <nav className="flex flex-wrap items-center gap-1 text-sm font-semibold text-slate-400">
         <Link href="/app/books" className="transition-colors hover:text-blue-700">
           Khám phá sách
         </Link>
@@ -150,126 +163,156 @@ export default function BookDetailPage() {
       {error ? <Alert variant="error">{error}</Alert> : null}
       {message ? <Alert variant="success">{message}</Alert> : null}
 
-      <section className="grid grid-cols-[220px_minmax(0,1fr)_360px] gap-6 max-xl:grid-cols-[190px_minmax(0,1fr)] max-lg:grid-cols-1">
-        <aside className="max-xl:row-span-1">
-          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-blue-50 shadow-[0_12px_34px_rgba(15,23,42,0.08)]">
-            <div className="flex aspect-[3/4] items-center justify-center overflow-hidden bg-blue-50">
+      <section className="grid grid-cols-[240px_minmax(0,1fr)_320px] items-start gap-8 max-xl:grid-cols-[220px_minmax(0,1fr)_320px] max-lg:grid-cols-1">
+        <aside className="max-lg:row-span-1">
+          <div className="overflow-hidden rounded-[24px] border border-slate-200/80 bg-white shadow-sm">
+            <div className="flex aspect-[3/4] items-center justify-center overflow-hidden bg-slate-50">
               {book.cover_image_url ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={book.cover_image_url} alt={book.title} className="h-full w-full object-cover" />
+                <img
+                  src={book.cover_image_url}
+                  alt={book.title}
+                  className="h-full w-full object-cover transition-transform duration-500 hover:scale-105"
+                />
               ) : (
-                <BookOpen className="h-16 w-16 text-blue-300" />
+                <div className="flex h-full w-full items-center justify-center rounded-2xl bg-blue-100 text-blue-700">
+                  <BookOpen className="h-16 w-16" />
+                </div>
               )}
             </div>
-            <div className="grid grid-cols-3 gap-2 border-t border-slate-200 bg-white p-3">
-              {[book.book_status, book.exchange_mode, book.book_condition].map((value) => (
-                <div key={value} className="h-10 rounded-xl bg-blue-50" />
-              ))}
+            <div className="grid gap-2 border-t border-slate-100 bg-white p-4">
+              <div className="flex flex-wrap gap-2 justify-center">
+                <Badge value={book.book_status} />
+                <Badge value={book.exchange_mode} />
+                <Badge value={book.book_condition} />
+              </div>
             </div>
           </div>
         </aside>
 
-        <main className="min-w-0">
-          <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 pb-4">
-            <div className="min-w-0">
-              <h1 className="text-3xl font-black tracking-normal text-slate-950 max-md:text-2xl">{book.title}</h1>
-              <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-slate-500">
-                <span>{book.author}</span>
-                {book.publication_year ? (
-                  <>
-                    <span>•</span>
-                    <span>{book.publication_year}</span>
-                  </>
-                ) : null}
-                {averageRating ? (
-                  <>
-                    <span>•</span>
-                    <Stars value={Math.round(averageRating)} />
-                    <span>({reviews.length} đánh giá)</span>
-                  </>
-                ) : null}
+        <main className="min-w-0 space-y-6">
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="min-w-0">
+                <div className="mb-3 flex flex-wrap gap-2">
+                  <Badge value={book.book_status} />
+                  {book.category ? <SoftPill>{book.category.category_name}</SoftPill> : null}
+                  <SoftPill tone="blue">{exchangeModeText(book.exchange_mode)}</SoftPill>
+                  <SoftPill tone="emerald">{conditionText(book.book_condition)}</SoftPill>
+                </div>
+                <h1 className="text-3xl font-bold tracking-tight text-slate-950 max-md:text-2xl">{book.title}</h1>
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-base text-slate-500">
+                  <span className="font-medium text-slate-700">{book.author}</span>
+                  {book.publication_year ? (
+                    <>
+                      <span>•</span>
+                      <span>Năm {book.publication_year}</span>
+                    </>
+                  ) : null}
+                  {averageRating ? (
+                    <>
+                      <span>•</span>
+                      <span className="flex items-center gap-1">
+                        <Stars value={Math.round(averageRating)} size="sm" />
+                        <span className="ml-1">({reviews.length} đánh giá)</span>
+                      </span>
+                    </>
+                  ) : null}
+                </div>
               </div>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {book.category ? <SoftPill>{book.category.category_name}</SoftPill> : null}
-                <SoftPill tone="blue">{exchangeModeText(book.exchange_mode)}</SoftPill>
-                <SoftPill tone="emerald">{conditionText(book.book_condition)}</SoftPill>
-                <Badge value={book.book_status} />
-              </div>
-            </div>
 
-            {isOwner ? (
-              <div className="flex flex-wrap gap-2">
-                <Link
-                  href={`/app/books/${bookId}/edit`}
-                  className="inline-flex h-9 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-sm font-bold text-slate-700 shadow-sm transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
-                >
-                  <Edit3 className="h-4 w-4" />
-                  Sửa
-                </Link>
-                {book.book_status === "UNLISTED" ? (
-                  <ConfirmButton size="sm" confirm="Bạn có muốn đăng lại sách này không?" onConfirm={publishBook}>
-                    <RotateCcw className="h-4 w-4" />
-                    Đăng lại
-                  </ConfirmButton>
-                ) : null}
-                {book.book_status === "AVAILABLE" ? (
-                  <ConfirmButton
-                    size="sm"
-                    variant="danger"
-                    confirm="Bạn có muốn gỡ sách này khỏi danh sách không?"
-                    onConfirm={removeBook}
+              {isOwner ? (
+                <div className="flex flex-wrap gap-2">
+                  <Link
+                    href={`/app/books/${bookId}/edit`}
+                    className="inline-flex h-9 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
                   >
-                    <Trash2 className="h-4 w-4" />
-                    Gỡ sách
-                  </ConfirmButton>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-
-          <div className="divide-y divide-slate-200 text-sm">
-            <DetailRow label="Tình trạng vật lý" value={conditionText(book.book_condition)} />
-            <DetailRow label="Hình thức" value={exchangeModeLongText(book.exchange_mode)} />
-            <DetailRow label="Điểm cần" value={`Trao đổi: 10 điểm • Mượn: 5 điểm`} />
-            <DetailRow
-              label="Chủ sách"
-              value={`${owner?.full_name ?? `Thành viên #${book.owner_id}`}${owner ? ` • ${owner.current_points} điểm • tham gia ${formatDate(owner.joined_at)}` : ""}`}
-            />
-            <DetailRow label="Danh mục" value={book.category?.category_name ?? "Chưa phân loại"} />
-            <DetailRow label="Đăng ngày" value={formatDate(book.created_at)} />
-          </div>
-
-          <section className="mt-6">
-            <h2 className="mb-2 text-base font-black text-slate-950">Mô tả sách</h2>
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <p className="whitespace-pre-line text-sm leading-7 text-slate-600">
-                {book.book_description || "Chủ sách chưa thêm mô tả."}
-              </p>
+                    <Edit3 className="h-4 w-4" />
+                    Sửa
+                  </Link>
+                  {book.book_status === "UNLISTED" ? (
+                    <ConfirmButton size="sm" confirm="Bạn có muốn đăng lại sách này không?" onConfirm={publishBook}>
+                      <RotateCcw className="h-4 w-4" />
+                      Đăng lại
+                    </ConfirmButton>
+                  ) : null}
+                  {book.book_status === "AVAILABLE" ? (
+                    <ConfirmButton
+                      size="sm"
+                      variant="danger"
+                      confirm="Bạn có muốn gỡ sách này khỏi danh sách không?"
+                      onConfirm={removeBook}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Gỡ sách
+                    </ConfirmButton>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
-          </section>
 
-          <section className="mt-6">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <h2 className="text-base font-black text-slate-950">Đánh giá về chủ sách</h2>
+            <div className="mt-8 rounded-2xl border border-slate-100 bg-slate-50/50 p-6">
+              <h3 className="text-lg font-bold text-slate-950">Thông tin chi tiết</h3>
+              <div className="mt-6 grid grid-cols-2 gap-x-8 gap-y-5 text-sm max-sm:grid-cols-1">
+                <div className="flex flex-col gap-1 border-b border-slate-200/60 pb-3">
+                  <span className="text-slate-500">Danh mục</span>
+                  <span className="font-semibold text-slate-900">{book.category?.category_name || "-"}</span>
+                </div>
+                <div className="flex flex-col gap-1 border-b border-slate-200/60 pb-3">
+                  <span className="text-slate-500">Chủ sách</span>
+                  <span className="font-semibold text-blue-700">{ownerName}</span>
+                </div>
+                <div className="flex flex-col gap-1 border-b border-slate-200/60 pb-3">
+                  <span className="text-slate-500">Tình trạng sách</span>
+                  <span className="font-semibold text-slate-900">{conditionText(book.book_condition)}</span>
+                </div>
+                <div className="flex flex-col gap-1 border-b border-slate-200/60 pb-3">
+                  <span className="text-slate-500">Điểm chủ sách</span>
+                  <span className="font-semibold text-slate-900">{ownerPoints !== undefined ? `${ownerPoints} điểm` : "-"}</span>
+                </div>
+                <div className="flex flex-col gap-1 border-b border-slate-200/60 pb-3">
+                  <span className="text-slate-500">Hình thức giao dịch</span>
+                  <span className="font-semibold text-slate-900">{exchangeModeLongText(book.exchange_mode)}</span>
+                </div>
+                <div className="flex flex-col gap-1 border-b border-slate-200/60 pb-3">
+                  <span className="text-slate-500">Ngày đăng</span>
+                  <span className="font-semibold text-slate-900">{formatDateOnly(book.created_at)}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6 rounded-2xl border border-slate-100 bg-slate-50/50 p-6">
+              <h3 className="text-lg font-bold text-slate-950">Mô tả sách</h3>
+              <div className="mt-4 text-base leading-relaxed text-slate-600 whitespace-pre-line">
+                {book.book_description || "Chủ sách chưa thêm mô tả."}
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <h2 className="text-lg font-semibold text-slate-950">Đánh giá về chủ sách</h2>
               {reviews.length > 2 ? (
-                <span className="text-xs font-bold text-blue-700">Xem tất cả {reviews.length} đánh giá</span>
+                <span className="text-sm font-semibold text-blue-700 hover:underline cursor-pointer">
+                  Xem tất cả {reviews.length} đánh giá
+                </span>
               ) : null}
             </div>
             {reviews.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-4 text-sm text-slate-500">
+              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">
                 Chưa có đánh giá cho sách này.
               </div>
             ) : (
-              <div className="grid grid-cols-2 gap-3 max-md:grid-cols-1">
+              <div className="grid grid-cols-2 gap-4 max-md:grid-cols-1">
                 {reviews.slice(0, 2).map((review, index) => (
                   <ReviewCard key={review.review_id} review={review} index={index} />
                 ))}
               </div>
             )}
-          </section>
+          </div>
         </main>
 
-        <aside className="max-xl:col-span-2 max-lg:col-span-1">
+        <aside className="sticky top-24 max-lg:static max-lg:col-span-1">
           <RequestPanel
             token={token}
             isOwner={isOwner}
@@ -279,6 +322,7 @@ export default function BookDetailPage() {
             selectedTransactionType={selectedTransactionType}
             selectedDeliveryMethod={selectedDeliveryMethod}
             selectedReceiverLocationId={selectedReceiverLocationId}
+            selectedReceiverLocation={selectedReceiverLocation}
             borrowDays={borrowDays}
             requestCost={requestCost}
             remainingPoints={remainingPoints}
@@ -296,9 +340,9 @@ export default function BookDetailPage() {
       </section>
 
       <section>
-        <h2 className="mb-3 text-lg font-black text-slate-950">Sách tương tự</h2>
+        <h2 className="mb-3 text-lg font-semibold text-slate-950">Sách tương tự</h2>
         {relatedBooks.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-4 text-sm text-slate-500">
+          <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-4 text-base text-slate-500">
             Chưa có sách tương tự trong cùng danh mục.
           </div>
         ) : (
@@ -312,14 +356,14 @@ export default function BookDetailPage() {
                 <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-blue-50 text-blue-700">
                   {item.cover_image_url ? (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img src={item.cover_image_url} alt={item.title} className="h-full w-full object-cover" />
+                    <img src={item.cover_image_url} alt={item.title} className="h-full w-full object-contain p-1" />
                   ) : (
                     <BookOpen className="h-5 w-5" />
                   )}
                 </div>
                 <div className="min-w-0">
-                  <div className="truncate text-sm font-black text-slate-900">{item.title}</div>
-                  <div className="truncate text-xs text-slate-500">{item.author}</div>
+                  <div className="truncate text-base font-semibold text-slate-900">{item.title}</div>
+                  <div className="truncate text-sm text-slate-500">{item.author}</div>
                   <div className="mt-1">
                     <Badge value={item.book_status} />
                   </div>
@@ -342,6 +386,7 @@ function RequestPanel({
   selectedTransactionType,
   selectedDeliveryMethod,
   selectedReceiverLocationId,
+  selectedReceiverLocation,
   borrowDays,
   requestCost,
   remainingPoints,
@@ -360,6 +405,7 @@ function RequestPanel({
   selectedTransactionType: TransactionType;
   selectedDeliveryMethod: DeliveryMethod;
   selectedReceiverLocationId: string;
+  selectedReceiverLocation: ReturnType<typeof getDeliveryLocation>;
   borrowDays: string;
   requestCost: number;
   remainingPoints: number;
@@ -373,8 +419,8 @@ function RequestPanel({
   if (!token) {
     return (
       <Panel>
-        <h2 className="text-base font-black text-slate-950">Yêu cầu giao dịch</h2>
-        <p className="mt-3 text-sm leading-6 text-slate-500">
+        <h2 className="text-base font-semibold text-slate-950">Yêu cầu giao dịch</h2>
+        <p className="mt-3 text-base leading-6 text-slate-500">
           Đăng nhập để gửi yêu cầu mượn hoặc trao đổi sách với thành viên đang sở hữu.
         </p>
         <div className="mt-4 flex flex-wrap gap-2">
@@ -390,8 +436,8 @@ function RequestPanel({
   if (isOwner) {
     return (
       <Panel>
-        <h2 className="text-base font-black text-slate-950">Sách của bạn</h2>
-        <p className="mt-3 text-sm leading-6 text-slate-500">
+        <h2 className="text-base font-semibold text-slate-950">Sách của bạn</h2>
+        <p className="mt-3 text-base leading-6 text-slate-500">
           Bạn là chủ sách nên không thể gửi yêu cầu giao dịch cho chính sách này.
         </p>
       </Panel>
@@ -401,8 +447,8 @@ function RequestPanel({
   if (!requestable) {
     return (
       <Panel>
-        <h2 className="text-base font-black text-slate-950">Yêu cầu giao dịch</h2>
-        <p className="mt-3 text-sm leading-6 text-slate-500">
+        <h2 className="text-base font-semibold text-slate-950">Yêu cầu giao dịch</h2>
+        <p className="mt-3 text-base leading-6 text-slate-500">
           Sách hiện chưa khả dụng để tạo yêu cầu mới.
         </p>
       </Panel>
@@ -411,7 +457,7 @@ function RequestPanel({
 
   return (
     <Panel>
-      <h2 className="text-base font-black text-slate-950">Yêu cầu giao dịch</h2>
+      <h2 className="text-base font-semibold text-slate-950">Yêu cầu giao dịch</h2>
       <form id="request-form" className="mt-4 space-y-5" onSubmit={onSubmit}>
         <input type="hidden" name="transaction_type" value={selectedTransactionType} />
         <input type="hidden" name="delivery_method" value={selectedDeliveryMethod} />
@@ -452,7 +498,7 @@ function RequestPanel({
               value={borrowDays}
               onChange={(event) => onBorrowDaysChange(event.target.value)}
               placeholder="Ví dụ: 14"
-              className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
+              className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-base font-semibold text-slate-900 outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
             />
           </div>
         ) : null}
@@ -480,12 +526,12 @@ function RequestPanel({
 
         {selectedDeliveryMethod === "FREE_COURIER" ? (
           <div>
-            <Label>Điểm nhận sách</Label>
+            <Label>Điểm giao mong muốn</Label>
             <select
               name="receiver_location_id_select"
               value={selectedReceiverLocationId}
               onChange={(event) => onReceiverLocationChange(event.target.value)}
-              className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
+              className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-base font-semibold text-slate-900 outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
             >
               {DELIVERY_LOCATIONS.map((location) => (
                 <option key={location.id} value={location.id}>
@@ -493,11 +539,16 @@ function RequestPanel({
                 </option>
               ))}
             </select>
-            <p className="mt-2 text-xs leading-5 text-slate-500">{FREE_COURIER_RADIUS_LABEL}</p>
+            <p className="mt-2 text-sm leading-5 text-slate-500">
+              {FREE_COURIER_RADIUS_LABEL} · {distanceFromUetKm(selectedReceiverLocation).toFixed(2)} km từ UET
+            </p>
+            <p className="mt-2 text-sm leading-5 text-emerald-700">
+              Chủ sách sẽ chọn điểm lấy khi duyệt yêu cầu. Courier chỉ thấy nhiệm vụ nếu cả hai điểm nằm trong khu vực họ đăng ký.
+            </p>
           </div>
         ) : null}
 
-        <div className="space-y-2 border-t border-slate-200 pt-4 text-sm">
+        <div className="space-y-2 border-t border-slate-200 pt-4 text-base">
           <div className="flex items-center justify-between gap-3">
             <span className="inline-flex items-center gap-2 text-slate-500">
               <Wallet className="h-4 w-4" />
@@ -511,16 +562,26 @@ function RequestPanel({
           </div>
         </div>
 
-        <ConfirmButton
-          className="w-full"
-          confirm="Bạn có muốn gửi yêu cầu giao dịch cho sách này không?"
-          onConfirm={onConfirmRequest}
-        >
-          <Send className="h-4 w-4" />
-          Gửi yêu cầu giao dịch
-        </ConfirmButton>
-        <p className="text-center text-xs leading-5 text-slate-400">
-          Yêu cầu sẽ được gửi tới chủ sách và chờ phê duyệt.
+        {remainingPoints < 0 ? (
+          <button
+            type="button"
+            disabled
+            className="flex h-10 w-full items-center justify-center gap-2 rounded-full bg-slate-100 px-4 text-sm font-semibold text-slate-400 cursor-not-allowed"
+          >
+            Điểm không đủ
+          </button>
+        ) : (
+          <ConfirmButton
+            className="w-full"
+            confirm="Bạn có muốn gửi yêu cầu giao dịch cho sách này không?"
+            onConfirm={onConfirmRequest}
+          >
+            <Send className="h-4 w-4" />
+            Gửi yêu cầu giao dịch
+          </ConfirmButton>
+        )}
+        <p className="text-center text-sm leading-5 text-slate-400">
+          Yêu cầu sẽ được gửi tới chủ sách để thống nhất điểm lấy và điểm giao trước khi courier nhận nhiệm vụ.
         </p>
       </form>
     </Panel>
@@ -529,7 +590,7 @@ function RequestPanel({
 
 function Panel({ children }: { children: React.ReactNode }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_16px_42px_rgba(15,23,42,0.08)]">
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_18px_46px_rgba(15,23,42,0.08)]">
       {children}
     </div>
   );
@@ -572,37 +633,28 @@ function ChoiceCard({
         {active ? <Check className="h-4 w-4" /> : icon}
       </span>
       <span className="min-w-0">
-        <span className="block text-sm font-black text-slate-900">{title}</span>
-        <span className="block text-xs text-slate-500">{subtitle}</span>
+        <span className="block text-base font-semibold text-slate-900">{title}</span>
+        <span className="block text-sm text-slate-500">{subtitle}</span>
       </span>
     </button>
-  );
-}
-
-function DetailRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="grid grid-cols-[180px_minmax(0,1fr)] gap-4 py-3 max-sm:grid-cols-1 max-sm:gap-1">
-      <div className="text-slate-400">{label}</div>
-      <div className="font-semibold text-slate-700">{value}</div>
-    </div>
   );
 }
 
 function ReviewCard({ review, index }: { review: Review; index: number }) {
   const name = review.reviewer_full_name ?? `Thành viên ${index + 1}`;
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+    <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 shadow-sm">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-50 text-sm font-black text-blue-700">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-100 text-base font-bold text-blue-700">
             {name.charAt(0).toUpperCase()}
           </div>
           <div>
-            <div className="text-sm font-black text-slate-900">{name}</div>
+            <div className="text-sm font-semibold text-slate-900">{name}</div>
             <Stars value={review.rating_score} size="sm" />
           </div>
         </div>
-        <span className="text-xs text-slate-400">{formatDate(review.created_at)}</span>
+        <span className="text-sm text-slate-400">{formatDate(review.created_at)}</span>
       </div>
       <p className="mt-3 text-sm leading-6 text-slate-600">
         “{review.review_content || "Không có nội dung đánh giá."}”
@@ -628,7 +680,7 @@ function Stars({ value, size = "md" }: { value: number; size?: "sm" | "md" }) {
 }
 
 function Label({ children }: { children: React.ReactNode }) {
-  return <div className="text-xs font-black text-slate-500">{children}</div>;
+  return <div className="text-sm font-semibold text-slate-500">{children}</div>;
 }
 
 function SoftPill({ children, tone = "slate" }: { children: React.ReactNode; tone?: "slate" | "blue" | "emerald" }) {
@@ -638,7 +690,7 @@ function SoftPill({ children, tone = "slate" }: { children: React.ReactNode; ton
     emerald: "border-emerald-200 bg-emerald-50 text-emerald-700"
   };
   return (
-    <span className={cn("inline-flex h-7 items-center rounded-full border px-3 text-xs font-bold", styles[tone])}>
+    <span className={cn("inline-flex h-7 items-center rounded-full border px-3 text-sm font-semibold", styles[tone])}>
       {children}
     </span>
   );
@@ -670,4 +722,9 @@ function exchangeModeLongText(value: string) {
     BOTH: "Trao đổi vĩnh viễn hoặc cho mượn tùy yêu cầu"
   };
   return labels[value] ?? value;
+}
+
+function formatDateOnly(value: string | null | undefined) {
+  if (!value) return "-";
+  return new Intl.DateTimeFormat("vi-VN", { dateStyle: "medium" }).format(new Date(value));
 }

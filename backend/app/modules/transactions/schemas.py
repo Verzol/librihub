@@ -58,6 +58,12 @@ class TransactionResponse(BaseModel):
     owner_full_name: str | None = None
     requester_id: int
     requester_full_name: str | None = None
+    pickup_address: str | None = None
+    receiver_address: str | None = None
+    pickup_lat: float | None = None
+    pickup_lng: float | None = None
+    receiver_lat: float | None = None
+    receiver_lng: float | None = None
     transaction_type: TransactionType
     delivery_method: DeliveryMethod
     transaction_status: TransactionStatus

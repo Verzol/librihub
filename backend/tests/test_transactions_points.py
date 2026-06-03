@@ -267,6 +267,8 @@ def test_borrow_return_requires_duration_and_completes_to_unlisted(client: TestC
     assert receipt_response.json()["transaction_status"] == "BORROWING"
     assert receipt_response.json()["borrowed_at"] is not None
     assert receipt_response.json()["expected_return_at"] is not None
+    assert client.get("/api/v1/points/me", headers=owner_headers).json()["current_points"] == 25
+    assert client.get("/api/v1/points/me", headers=requester_headers).json()["current_points"] == 15
 
     return_response = client.post(
         f"/api/v1/transactions/{transaction['transaction_id']}/return",
@@ -328,7 +330,7 @@ def test_late_borrow_return_charges_requester_penalty(client: TestClient, monkey
     class LateReturn(datetime):
         @classmethod
         def now(cls, tz: object = None) -> datetime:
-            return datetime(2026, 1, 4, 1, tzinfo=UTC)
+            return datetime(2026, 1, 5, 1, tzinfo=UTC)
 
     monkeypatch.setattr(transaction_service, "datetime", LateReturn)
     client.post(f"/api/v1/transactions/{transaction['transaction_id']}/return", headers=requester_headers)
@@ -344,6 +346,117 @@ def test_late_borrow_return_charges_requester_penalty(client: TestClient, monkey
     requester_ledger = client.get("/api/v1/points/me/ledger", headers=requester_headers).json()
     assert requester_ledger[0]["reason"] == "LATE_RETURN_PENALTY"
     assert requester_ledger[0]["point_change"] == -6
+
+
+def test_owner_can_confirm_borrow_return_when_late_penalty_exceeds_requester_points(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.modules.transactions import service as transaction_service
+
+    owner_headers = auth_headers(client, "owner@example.com", "0900000001", "SV101")
+    second_owner_headers = auth_headers(client, "owner2@example.com", "0900000004", "SV104")
+    requester_headers = auth_headers(client, "requester@example.com", "0900000002", "SV102")
+    borrowed_book = create_book(client, owner_headers, exchange_mode="BORROW_RETURN")
+    transaction = create_transaction(
+        client,
+        requester_headers,
+        borrowed_book["book_id"],
+        transaction_type="BORROW_RETURN",
+        borrow_duration_days=1,
+    )
+    client.post(f"/api/v1/transactions/{transaction['transaction_id']}/accept", headers=owner_headers)
+
+    class BorrowStart(datetime):
+        @classmethod
+        def now(cls, tz: object = None) -> datetime:
+            return datetime(2026, 1, 1, tzinfo=UTC)
+
+    monkeypatch.setattr(transaction_service, "datetime", BorrowStart)
+    receipt_response = client.post(
+        f"/api/v1/transactions/{transaction['transaction_id']}/confirm-receipt",
+        headers=requester_headers,
+    )
+    assert receipt_response.status_code == 200
+
+    exchange_book = create_book(client, second_owner_headers, exchange_mode="PERMANENT_EXCHANGE")
+    exchange = create_transaction(client, requester_headers, exchange_book["book_id"])
+    client.post(f"/api/v1/transactions/{exchange['transaction_id']}/accept", headers=second_owner_headers)
+    client.post(f"/api/v1/transactions/{exchange['transaction_id']}/confirm", headers=second_owner_headers)
+    client.post(f"/api/v1/transactions/{exchange['transaction_id']}/confirm", headers=requester_headers)
+    assert client.get("/api/v1/points/me", headers=requester_headers).json()["current_points"] == 5
+
+    class LateReturn(datetime):
+        @classmethod
+        def now(cls, tz: object = None) -> datetime:
+            return datetime(2026, 1, 5, 1, tzinfo=UTC)
+
+    monkeypatch.setattr(transaction_service, "datetime", LateReturn)
+    client.post(f"/api/v1/transactions/{transaction['transaction_id']}/return", headers=requester_headers)
+    response = client.post(
+        f"/api/v1/transactions/{transaction['transaction_id']}/confirm-return",
+        headers=owner_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["transaction_status"] == "COMPLETED"
+    assert response.json()["late_days"] == 3
+    assert response.json()["late_fee_points"] == 5
+    assert client.get("/api/v1/points/me", headers=requester_headers).json()["current_points"] == 0
+
+
+def test_borrow_return_penalty_uses_requester_return_request_time(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.modules.transactions import service as transaction_service
+
+    owner_headers = auth_headers(client, "owner@example.com", "0900000001", "SV101")
+    requester_headers = auth_headers(client, "requester@example.com", "0900000002", "SV102")
+    book = create_book(client, owner_headers, exchange_mode="BORROW_RETURN")
+    transaction = create_transaction(
+        client,
+        requester_headers,
+        book["book_id"],
+        transaction_type="BORROW_RETURN",
+        borrow_duration_days=2,
+    )
+    client.post(f"/api/v1/transactions/{transaction['transaction_id']}/accept", headers=owner_headers)
+
+    class BorrowStart(datetime):
+        @classmethod
+        def now(cls, tz: object = None) -> datetime:
+            return datetime(2026, 6, 1, 10, 36, tzinfo=UTC)
+
+    monkeypatch.setattr(transaction_service, "datetime", BorrowStart)
+    client.post(
+        f"/api/v1/transactions/{transaction['transaction_id']}/confirm-receipt",
+        headers=requester_headers,
+    )
+
+    class EarlyReturnRequest(datetime):
+        @classmethod
+        def now(cls, tz: object = None) -> datetime:
+            return datetime(2026, 6, 3, 10, 35, tzinfo=UTC)
+
+    monkeypatch.setattr(transaction_service, "datetime", EarlyReturnRequest)
+    client.post(f"/api/v1/transactions/{transaction['transaction_id']}/return", headers=requester_headers)
+
+    class OwnerConfirmsLate(datetime):
+        @classmethod
+        def now(cls, tz: object = None) -> datetime:
+            return datetime(2026, 6, 5, 8, 0, tzinfo=UTC)
+
+    monkeypatch.setattr(transaction_service, "datetime", OwnerConfirmsLate)
+    response = client.post(
+        f"/api/v1/transactions/{transaction['transaction_id']}/confirm-return",
+        headers=owner_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["late_days"] == 0
+    assert response.json()["late_fee_points"] == 0
+    assert client.get("/api/v1/points/me", headers=requester_headers).json()["current_points"] == 15
 
 
 def test_transaction_persistence_has_final_book_state(client: TestClient) -> None:

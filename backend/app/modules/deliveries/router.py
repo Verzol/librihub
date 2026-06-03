@@ -12,12 +12,14 @@ from app.modules.deliveries.service import (
     CourierProfileRequiredError,
     CourierUnavailableError,
     DeliveryNotFoundError,
+    InvalidDeliveryScheduleError,
     DeliveryTaskNotFoundError,
     ForbiddenDeliveryActionError,
     InvalidDeliveryStateError,
     accept_delivery_task,
     list_available_delivery_tasks,
     list_my_deliveries,
+    list_user_deliveries,
     mark_delivery_delivered,
     mark_delivery_failed,
     mark_delivery_picked_up,
@@ -79,6 +81,11 @@ def read_my_deliveries(db: DbSession, current_user: CurrentUser) -> list[Deliver
     return [_delivery_response(db, delivery) for delivery in deliveries]
 
 
+@router.get("/users/{user_id}/deliveries", response_model=list[DeliveryResponse], tags=["users", "deliveries"])
+def read_user_deliveries(user_id: int, db: DbSession, _current_user: CurrentUser) -> list[DeliveryResponse]:
+    return [_delivery_response(db, delivery) for delivery in list_user_deliveries(db, user_id)]
+
+
 @router.post(
     "/deliveries/transactions/{transaction_id}/accept",
     response_model=DeliveryResponse,
@@ -112,6 +119,11 @@ def accept_task(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Delivery task is already assigned.",
+        ) from None
+    except InvalidDeliveryScheduleError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Expected delivery time must be within 3 days after accepting the task.",
         ) from None
     return _delivery_response(db, delivery)
 

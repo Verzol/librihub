@@ -29,6 +29,7 @@ from app.modules.books.service import (
     list_books,
     list_categories,
     list_category_summaries,
+    list_user_books,
     publish_book,
     set_book_cover,
     soft_delete_book,
@@ -138,6 +139,11 @@ def read_books(
         exchange_mode=exchange_mode.value if exchange_mode else None,
     )
     return [BookResponse.model_validate(book) for book in books]
+
+
+@router.get("/users/{user_id}/books", response_model=list[BookResponse], tags=["users", "books"])
+def read_user_books(user_id: int, db: DbSession, _current_user: CurrentUser) -> list[BookResponse]:
+    return [BookResponse.model_validate(book) for book in list_user_books(db, user_id)]
 
 
 @router.post(
