@@ -97,6 +97,7 @@ class BookResponse(BaseModel):
 
     book_id: int
     owner_id: int
+    owner_full_name: str | None = None
     category_id: int
     title: str
     author: str

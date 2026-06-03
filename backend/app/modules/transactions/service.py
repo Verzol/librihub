@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app.core.delivery_area import is_within_free_courier_area
+from app.core.delivery_area import is_supported_campus_delivery_point
 from app.models.enums import (
     ActivityType,
     BookStatus,
@@ -62,6 +62,7 @@ def list_my_transactions(
             selectinload(Transaction.book),
             selectinload(Transaction.owner),
             selectinload(Transaction.requester),
+            selectinload(Transaction.delivery),
         )
         .order_by(Transaction.requested_at.desc())
     )
@@ -106,7 +107,7 @@ def create_transaction(
     )
     if existing_active is not None:
         raise BookNotAvailableError
-    if payload.delivery_method == DeliveryMethod.FREE_COURIER and not is_within_free_courier_area(
+    if payload.delivery_method == DeliveryMethod.FREE_COURIER and not is_supported_campus_delivery_point(
         payload.receiver_lat or 0,
         payload.receiver_lng or 0,
     ):
@@ -163,7 +164,7 @@ def accept_transaction(
     if transaction.delivery_method == DeliveryMethod.FREE_COURIER:
         if payload is None or payload.pickup_address is None or payload.pickup_lat is None or payload.pickup_lng is None:
             raise InvalidTransactionRequestError
-        if not is_within_free_courier_area(payload.pickup_lat, payload.pickup_lng):
+        if not is_supported_campus_delivery_point(payload.pickup_lat, payload.pickup_lng):
             raise DeliveryAreaNotSupportedError
         delivery = db.scalar(
             select(Delivery)
@@ -286,19 +287,24 @@ def confirm_borrow_receipt(db: Session, current_user: User, transaction_id: int)
         raise InvalidTransactionStateError
 
     now = datetime.now(UTC)
-    transaction.requester_confirmed = True
-    transaction.borrowed_at = now
-    transaction.expected_return_at = now + timedelta(days=transaction.borrow_duration_days)
-    transaction.transaction_status = TransactionStatus.BORROWING
-    _set_book_status(db, transaction, BookStatus.BORROWED)
-    db.add(
-        ActivityLog(
-            user_id=current_user.user_id,
-            activity_type=ActivityType.CONFIRM_TRANSACTION,
-            activity_description=f"Confirmed receipt for borrow transaction #{transaction.transaction_id}.",
+    try:
+        _settle_borrow_receipt(db, transaction)
+        transaction.requester_confirmed = True
+        transaction.borrowed_at = now
+        transaction.expected_return_at = now + timedelta(days=transaction.borrow_duration_days)
+        transaction.transaction_status = TransactionStatus.BORROWING
+        _set_book_status(db, transaction, BookStatus.BORROWED)
+        db.add(
+            ActivityLog(
+                user_id=current_user.user_id,
+                activity_type=ActivityType.CONFIRM_TRANSACTION,
+                activity_description=f"Confirmed receipt for borrow transaction #{transaction.transaction_id}.",
+            )
         )
-    )
-    db.commit()
+        db.commit()
+    except InsufficientPointsError:
+        db.rollback()
+        raise
     db.refresh(transaction)
     return transaction
 
@@ -338,59 +344,37 @@ def confirm_borrow_return(db: Session, current_user: User, transaction_id: int) 
         raise InvalidTransactionStateError
 
     now = datetime.now(UTC)
-    requester = db.scalar(
-        select(User).where(User.user_id == transaction.requester_id).with_for_update()
-    )
-    owner = db.scalar(select(User).where(User.user_id == transaction.owner_id).with_for_update())
-    if requester is None or owner is None:
+    requester = db.scalar(select(User).where(User.user_id == transaction.requester_id).with_for_update())
+    if requester is None:
         raise TransactionNotFoundError
 
-    late_days = _calculate_late_days(transaction.expected_return_at, now)
-    late_fee_points = late_days * LATE_RETURN_PENALTY_PER_DAY
+    effective_return_time = transaction.return_requested_at or now
+    late_days = _calculate_late_days(transaction.expected_return_at, effective_return_time)
+    late_fee_points = min(late_days * LATE_RETURN_PENALTY_PER_DAY, requester.current_points)
     transaction.returned_at = now
     transaction.owner_confirmed = True
     transaction.late_days = late_days
     transaction.late_fee_points = late_fee_points
-    try:
+    if late_fee_points:
         add_point_change(
             db,
             user=requester,
             transaction_id=transaction.transaction_id,
             role_in_transaction=RoleInTransaction.REQUESTER,
-            point_change=REQUESTER_BORROW_POINTS,
-            reason=PointLedgerReason.BORROW_COST,
+            point_change=-late_fee_points,
+            reason=PointLedgerReason.LATE_RETURN_PENALTY,
         )
-        add_point_change(
-            db,
-            user=owner,
-            transaction_id=transaction.transaction_id,
-            role_in_transaction=RoleInTransaction.OWNER,
-            point_change=OWNER_BORROW_POINTS,
-            reason=PointLedgerReason.BORROW_REWARD,
+    transaction.transaction_status = TransactionStatus.COMPLETED
+    transaction.completed_at = now
+    _set_book_status(db, transaction, BookStatus.UNLISTED)
+    db.add(
+        ActivityLog(
+            user_id=current_user.user_id,
+            activity_type=ActivityType.CONFIRM_TRANSACTION,
+            activity_description=f"Confirmed returned book for transaction #{transaction.transaction_id}.",
         )
-        if late_fee_points:
-            add_point_change(
-                db,
-                user=requester,
-                transaction_id=transaction.transaction_id,
-                role_in_transaction=RoleInTransaction.REQUESTER,
-                point_change=-late_fee_points,
-                reason=PointLedgerReason.LATE_RETURN_PENALTY,
-            )
-        transaction.transaction_status = TransactionStatus.COMPLETED
-        transaction.completed_at = now
-        _set_book_status(db, transaction, BookStatus.UNLISTED)
-        db.add(
-            ActivityLog(
-                user_id=current_user.user_id,
-                activity_type=ActivityType.CONFIRM_TRANSACTION,
-                activity_description=f"Confirmed returned book for transaction #{transaction.transaction_id}.",
-            )
-        )
-        db.commit()
-    except InsufficientPointsError:
-        db.rollback()
-        raise
+    )
+    db.commit()
     db.refresh(transaction)
     return transaction
 
@@ -479,6 +463,32 @@ def _complete_transaction(db: Session, transaction: Transaction) -> None:
     transaction.completed_at = datetime.now(UTC)
 
 
+def _settle_borrow_receipt(db: Session, transaction: Transaction) -> None:
+    owner = db.scalar(select(User).where(User.user_id == transaction.owner_id).with_for_update())
+    requester = db.scalar(
+        select(User).where(User.user_id == transaction.requester_id).with_for_update()
+    )
+    if owner is None or requester is None:
+        raise TransactionNotFoundError
+
+    add_point_change(
+        db,
+        user=requester,
+        transaction_id=transaction.transaction_id,
+        role_in_transaction=RoleInTransaction.REQUESTER,
+        point_change=REQUESTER_BORROW_POINTS,
+        reason=PointLedgerReason.BORROW_COST,
+    )
+    add_point_change(
+        db,
+        user=owner,
+        transaction_id=transaction.transaction_id,
+        role_in_transaction=RoleInTransaction.OWNER,
+        point_change=OWNER_BORROW_POINTS,
+        reason=PointLedgerReason.BORROW_REWARD,
+    )
+
+
 def _release_book(db: Session, transaction: Transaction) -> None:
     book = db.scalar(select(Book).where(Book.book_id == transaction.book_id).with_for_update())
     if book is not None and book.book_status == BookStatus.PENDING_TRANSACTION:
@@ -513,11 +523,9 @@ def _calculate_late_days(expected_return_at: datetime | None, returned_at: datet
         return 0
     expected = _as_utc(expected_return_at)
     returned = _as_utc(returned_at)
-    if returned <= expected:
+    if returned.date() <= expected.date():
         return 0
-    overdue_seconds = (returned - expected).total_seconds()
-    seconds_per_day = 24 * 60 * 60
-    return int((overdue_seconds + seconds_per_day - 1) // seconds_per_day)
+    return (returned.date() - expected.date()).days
 
 
 def _as_utc(value: datetime) -> datetime:

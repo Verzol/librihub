@@ -74,6 +74,7 @@ def get_community_leaderboard(db: Session) -> dict[str, list[object]]:
         select(CourierProfile, User.full_name)
         .join(User, User.user_id == CourierProfile.user_id)
         .where(CourierProfile.courier_status.in_([CourierStatus.AVAILABLE, CourierStatus.BUSY]))
+        .where(User.role != UserRole.ADMIN)
         .order_by(CourierProfile.successful_delivery_count.desc(), CourierProfile.registered_at.asc())
         .limit(5)
     )
@@ -81,6 +82,7 @@ def get_community_leaderboard(db: Session) -> dict[str, list[object]]:
     top_users_statement = (
         select(User)
         .where(User.account_status == AccountStatus.ACTIVE)
+        .where(User.role != UserRole.ADMIN)
         .order_by(User.current_points.desc(), User.created_at.asc())
         .limit(5)
     )
@@ -120,7 +122,11 @@ def list_books(
     category_id: int | None = None,
     exchange_mode: str | None = None,
 ) -> list[Book]:
-    statement = select(Book).options(selectinload(Book.category)).order_by(Book.created_at.desc())
+    statement = (
+        select(Book)
+        .options(selectinload(Book.category), selectinload(Book.owner))
+        .order_by(Book.created_at.desc())
+    )
 
     if mine:
         if not current_user:
@@ -141,10 +147,20 @@ def list_books(
     return list(db.scalars(statement))
 
 
+def list_user_books(db: Session, user_id: int) -> list[Book]:
+    statement = (
+        select(Book)
+        .options(selectinload(Book.category), selectinload(Book.owner))
+        .where(Book.owner_id == user_id, Book.book_status != BookStatus.REMOVED)
+        .order_by(Book.created_at.desc())
+    )
+    return list(db.scalars(statement))
+
+
 def get_book(db: Session, book_id: int) -> Book | None:
     statement = (
         select(Book)
-        .options(selectinload(Book.category))
+        .options(selectinload(Book.category), selectinload(Book.owner))
         .where(Book.book_id == book_id, Book.book_status != BookStatus.REMOVED)
     )
     return db.scalar(statement)
