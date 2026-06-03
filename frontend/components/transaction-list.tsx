@@ -20,7 +20,7 @@ import type { Book, PublicUserSummary, Review, ReviewType, Transaction, Transact
 import { useAuth } from "@/lib/auth";
 import { DELIVERY_LOCATIONS, FREE_COURIER_RADIUS_LABEL, getDeliveryLocation } from "@/lib/delivery-locations";
 import { cn, formatDate } from "@/lib/utils";
-import { Alert, Badge, ConfirmButton, EmptyState } from "./ui";
+import { Alert, Badge, Card, ConfirmButton, EmptyState } from "./ui";
 
 type TransactionAction =
   | "accept"
@@ -212,46 +212,52 @@ export function TransactionList({
   if (initial.length === 0) {
     return (
       <EmptyState title="Chưa có giao dịch">
-        Các yêu cầu mượn trả và trao đổi sẽ xuất hiện ở đây sau khi bạn gửi hoặc nhận yêu cầu
-        từ người dùng khác.
+        Những yêu cầu mượn trả và trao đổi sách của bạn sẽ được hiển thị tại đây.
       </EmptyState>
     );
   }
 
   return (
     <div className="grid grid-cols-[240px_minmax(0,1fr)] gap-5 max-lg:grid-cols-1">
-      <aside className="flex flex-col gap-3">
-        <StatCard icon={<RotateCcw className="h-4 w-4" />} value={counts.all} label="Tổng giao dịch" />
+      <aside className="flex flex-col gap-2.5">
+        <StatCard icon={<RotateCcw className="h-4 w-4" />} value={counts.all} label="Tổng giao dịch" tone="blue" />
         <StatCard
           icon={<Clock3 className="h-4 w-4" />}
           value={counts.active + counts.pending}
           label="Đang xử lý"
+          tone="amber"
         />
-        <StatCard icon={<Check className="h-4 w-4" />} value={counts.completed} label="Hoàn tất" />
+        <StatCard icon={<Check className="h-4 w-4" />} value={counts.completed} label="Hoàn tất" tone="emerald" />
         <StatCard
           icon={<Trophy className="h-4 w-4" />}
           value={estimateEarnedPoints(initial, user?.user_id)}
           label="Điểm đã nhận"
+          tone="violet"
           signed
         />
       </aside>
 
       <section className="min-w-0">
-        <div className="mb-4 flex gap-2 overflow-x-auto border-b border-slate-200">
+        <div className="mb-4 flex gap-1 overflow-x-auto rounded-xl bg-slate-100 p-1">
           {FILTERS.map((item) => (
             <button
               key={item.key}
               type="button"
               onClick={() => setFilter(item.key)}
               className={cn(
-                "relative whitespace-nowrap px-4 py-3 text-sm font-semibold text-slate-500 transition-colors hover:text-blue-700",
-                filter === item.key && "text-blue-700"
+                "relative flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-xs font-semibold transition-all",
+                filter === item.key
+                  ? "bg-white text-blue-700 shadow-sm"
+                  : "text-slate-500 hover:bg-white/60 hover:text-slate-800"
               )}
             >
-              {item.label} ({counts[item.key]})
-              {filter === item.key ? (
-                <span className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-blue-700" />
-              ) : null}
+              {item.label}
+              <span className={cn(
+                "rounded-full px-1.5 py-0.5 text-[10px] font-bold",
+                filter === item.key ? "bg-blue-100 text-blue-700" : "bg-slate-200 text-slate-500"
+              )}>
+                {counts[item.key]}
+              </span>
             </button>
           ))}
         </div>
@@ -260,7 +266,7 @@ export function TransactionList({
           {error ? <Alert variant="error">{error}</Alert> : null}
 
           <TransactionSection
-            title="Chờ phê duyệt: bạn là chủ sách"
+            title="Chờ bạn phản hồi (Vai trò chủ sách)"
             items={pendingAsOwner}
             books={books}
             reviewsByTransaction={reviewsByTransaction}
@@ -275,7 +281,7 @@ export function TransactionList({
             }
           />
           <TransactionSection
-            title="Chờ phản hồi từ chủ sách"
+            title="Chờ chủ sách phản hồi"
             items={pendingAsRequester}
             books={books}
             reviewsByTransaction={reviewsByTransaction}
@@ -460,9 +466,26 @@ function TransactionCard({
     }
   }
 
+  const isDelivering = transaction.transaction_status === "DELIVERING";
+  const statusStripe = transaction.transaction_status === "DELIVERING"
+    ? "border-l-amber-400"
+    : transaction.transaction_status === "COMPLETED"
+    ? "border-l-emerald-400"
+    : transaction.transaction_status === "PENDING"
+    ? "border-l-blue-400"
+    : ["CANCELLED", "REJECTED"].includes(transaction.transaction_status)
+    ? "border-l-red-300"
+    : "border-l-slate-200";
+
   return (
-    <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_26px_rgba(15,23,42,0.06)]">
-      <div className="grid grid-cols-[56px_minmax(0,1fr)_auto] gap-4 max-md:grid-cols-[48px_minmax(0,1fr)]">
+    <article
+      className={cn(
+        "overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-all hover:shadow-md border-l-4",
+        statusStripe,
+        isDelivering && "border-amber-200 bg-amber-50/20"
+      )}
+    >
+      <div className="grid grid-cols-[56px_minmax(0,1fr)_auto] gap-4 p-4 max-md:grid-cols-[44px_minmax(0,1fr)]">
         <BookThumb book={book} />
 
         <div className="min-w-0">
@@ -477,8 +500,6 @@ function TransactionCard({
               : "Dịch vụ giao sách"}{" "}
             · yêu cầu {formatDate(transaction.requested_at)}
           </p>
-
-          {!compact ? <ProgressLine transaction={transaction} /> : null}
 
           <div className="mt-3 flex flex-wrap gap-2 text-xs">
             <PersonPill label="Chủ sách" name={ownerName} active={isOwner} />
@@ -514,9 +535,16 @@ function TransactionCard({
           />
         </div>
       </div>
-      {reviewMessage ? <div className="mt-3"><Alert variant="success">{reviewMessage}</Alert></div> : null}
+
+      {!compact ? (
+        <div className="border-t border-slate-100 px-4 pb-4 pt-4">
+          <ProgressLine transaction={transaction} />
+        </div>
+      ) : null}
+
+      {reviewMessage ? <div className="px-4 pb-4"><Alert variant="success">{reviewMessage}</Alert></div> : null}
       {transaction.transaction_status === "COMPLETED" && (isOwner || isRequester) ? (
-        <div className="mt-4 border-t border-slate-200 pt-4">
+        <div className="border-t border-slate-100 bg-slate-50/50 p-4">
           <div className="flex flex-wrap items-center gap-2">
             {myReview ? (
               <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 text-xs font-bold text-emerald-700">
@@ -817,22 +845,34 @@ function StatCard({
   icon,
   value,
   label,
-  signed = false
+  signed = false,
+  tone = "blue"
 }: {
   icon: React.ReactNode;
   value: number;
   label: string;
   signed?: boolean;
+  tone?: "blue" | "amber" | "emerald" | "violet" | "slate";
 }) {
+  const toneMap: Record<string, string> = {
+    blue: "bg-blue-50 text-blue-700 ring-blue-100",
+    amber: "bg-amber-50 text-amber-600 ring-amber-100",
+    emerald: "bg-emerald-50 text-emerald-700 ring-emerald-100",
+    violet: "bg-violet-50 text-violet-700 ring-violet-100",
+    slate: "bg-slate-100 text-slate-500 ring-slate-200"
+  };
+
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_26px_rgba(15,23,42,0.05)]">
-      <div className="mb-2 flex h-8 w-8 items-center justify-center rounded-xl bg-blue-50 text-blue-700">{icon}</div>
-      <div className="text-2xl font-bold tabular-nums text-slate-950">
+    <Card className="flex items-center gap-3 p-4 transition-all hover:-translate-y-1 hover:shadow-md">
+      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ring-1 ring-inset ${toneMap[tone]}`}>
+        {icon}
+      </div>
+      <div className="text-2xl font-bold tabular-nums text-slate-900">
         {signed && value > 0 ? "+" : ""}
         {value}
       </div>
-      <p className="text-xs font-medium text-slate-500">{label}</p>
-    </div>
+      <p className="text-xs font-semibold text-slate-400">{label}</p>
+    </Card>
   );
 }
 

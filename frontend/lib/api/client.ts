@@ -41,7 +41,21 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
 
 export function errorMessage(error: unknown) {
   if (typeof error === "object" && error && "message" in error) {
-    return String((error as ApiError).message);
+    return translateApiMessage(String((error as ApiError).message));
   }
-  return "Khong the ket noi API. Hay thu lai.";
+  return "Không thể kết nối API. Hãy thử lại.";
+}
+
+function translateApiMessage(message: string) {
+  const labels: Record<string, string> = {
+    "Requester has insufficient points for late return penalty.":
+      "Người mượn không đủ LibriPoint để thanh toán phí trả trễ.",
+    "Requester has insufficient points for settlement.":
+      "Người yêu cầu không đủ LibriPoint để hoàn tất giao dịch.",
+    "Free courier only supports configured campus handoff points near UET.":
+      "Dịch vụ giao sách chỉ hỗ trợ các điểm giao nhận trong khuôn viên UET.",
+    "Expected delivery time must be within 3 days after accepting the task.":
+      "Thời gian giao dự kiến phải nằm trong vòng 3 ngày sau khi nhận nhiệm vụ."
+  };
+  return labels[message] ?? message;
 }
