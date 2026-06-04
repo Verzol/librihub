@@ -1,7 +1,10 @@
 import { apiFetch } from "./client";
 import type {
   AdminBook,
+  AdminDashboardMetrics,
   AdminLog,
+  AdminPointAdjustmentResponse,
+  AdminTransaction,
   AdminUser,
   Book,
   BookInput,
@@ -26,6 +29,20 @@ import type {
   PublicUserSummary,
   UserNotification
 } from "./types";
+
+type AdminListParams = Record<string, string | number | null | undefined>;
+
+function queryString(params?: AdminListParams) {
+  if (!params) return "";
+  const searchParams = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") {
+      searchParams.set(key, String(value));
+    }
+  });
+  const query = searchParams.toString();
+  return query ? `?${query}` : "";
+}
 
 export const authApi = {
   register: (input: RegisterInput) => apiFetch<RegisterResponse>("/api/v1/auth/register", { method: "POST", body: input }),
@@ -111,17 +128,22 @@ export const reviewsApi = {
 };
 
 export const adminApi = {
-  users: (token: string) => apiFetch<AdminUser[]>("/api/v1/admin/users", { token }),
+  users: (token: string, params?: AdminListParams) => apiFetch<AdminUser[]>(`/api/v1/admin/users${queryString(params)}`, { token }),
+  dashboardMetrics: (token: string, days = 14) =>
+    apiFetch<AdminDashboardMetrics>(`/api/v1/admin/dashboard-metrics${queryString({ days })}`, { token }),
+  books: (token: string, params?: AdminListParams) => apiFetch<AdminBook[]>(`/api/v1/admin/books${queryString(params)}`, { token }),
+  transactions: (token: string, params?: AdminListParams) =>
+    apiFetch<AdminTransaction[]>(`/api/v1/admin/transactions${queryString(params)}`, { token }),
   lock: (token: string, id: number) => apiFetch<AdminUser>(`/api/v1/admin/users/${id}/lock`, { token, method: "POST" }),
   unlock: (token: string, id: number) => apiFetch<AdminUser>(`/api/v1/admin/users/${id}/unlock`, { token, method: "POST" }),
   adjustPoints: (token: string, id: number, input: { point_change: number; reason: string }) =>
-    apiFetch<unknown>(`/api/v1/admin/users/${id}/point-adjustments`, { token, method: "POST", body: input }),
+    apiFetch<AdminPointAdjustmentResponse>(`/api/v1/admin/users/${id}/point-adjustments`, { token, method: "POST", body: input }),
   hideBook: (token: string, id: number) => apiFetch<AdminBook>(`/api/v1/admin/books/${id}/hide`, { token, method: "POST" }),
   restoreBook: (token: string, id: number) => apiFetch<AdminBook>(`/api/v1/admin/books/${id}/restore`, { token, method: "POST" }),
-  cancelTransaction: (token: string, id: number) => apiFetch<unknown>(`/api/v1/admin/transactions/${id}/cancel`, { token, method: "POST" }),
+  cancelTransaction: (token: string, id: number) => apiFetch<AdminTransaction>(`/api/v1/admin/transactions/${id}/cancel`, { token, method: "POST" }),
   courierApplications: (token: string) => apiFetch<CourierProfile[]>("/api/v1/admin/courier-applications", { token }),
   reviewCourier: (token: string, id: number, decision: "approve" | "reject", review_note?: string) =>
     apiFetch<CourierProfile>(`/api/v1/admin/courier-applications/${id}/${decision}`, { token, method: "POST", body: { review_note } }),
-  activityLogs: (token: string) => apiFetch<AdminLog[]>("/api/v1/admin/activity-logs", { token }),
-  adminActions: (token: string) => apiFetch<AdminLog[]>("/api/v1/admin/admin-actions", { token })
+  activityLogs: (token: string, params?: AdminListParams) => apiFetch<AdminLog[]>(`/api/v1/admin/activity-logs${queryString(params)}`, { token }),
+  adminActions: (token: string, params?: AdminListParams) => apiFetch<AdminLog[]>(`/api/v1/admin/admin-actions${queryString(params)}`, { token })
 };

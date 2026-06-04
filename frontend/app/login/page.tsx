@@ -164,3 +164,11 @@ export default function LoginPage() {
     </main>
   );
 }
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<main className="min-h-screen bg-[#f3f7fc]" />}>
+      <LoginContent />
+    </Suspense>
+  );
+}
