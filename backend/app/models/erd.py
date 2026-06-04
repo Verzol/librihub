@@ -80,7 +80,6 @@ class User(Base):
     admin_profile: Mapped["AdminProfile | None"] = relationship(back_populates="user")
 
     __table_args__ = (
-        CheckConstraint("current_points >= 0", name="ck_USER_current_points_nonnegative"),
         Index("ix_USER_email", "email"),
         Index("ix_USER_phone", "phone"),
     )

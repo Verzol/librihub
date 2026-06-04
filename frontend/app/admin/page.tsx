@@ -5,17 +5,24 @@ import Link from "next/link";
 import { adminApi } from "@/lib/api";
 import { errorMessage } from "@/lib/api/client";
 import { useAuth } from "@/lib/auth";
-import type { AdminLog } from "@/lib/api/types";
+import type { AdminLog, AdminUser } from "@/lib/api/types";
 import { Alert, Badge, PageHeader } from "@/components/ui";
 import { Activity, Book, ShieldAlert, Truck, UserCheck, UserCog, Users, Repeat } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { vi } from "date-fns/locale";
+
+type DashboardChartPoint = {
+  label: string;
+  users: number;
+  transactions: number;
+};
 
 export default function AdminDashboardPage() {
   const { token, user } = useAuth();
   const [stats, setStats] = useState({ users: 0, couriers: 0, activityLogs: 0, adminActions: 0 });
   const [activities, setActivities] = useState<AdminLog[]>([]);
   const [adminActionsList, setAdminActionsList] = useState<AdminLog[]>([]);
+  const [chartData, setChartData] = useState<DashboardChartPoint[]>([]);
   const [userMap, setUserMap] = useState<Record<number, string>>({});
   const [error, setError] = useState("");
 
@@ -37,6 +44,7 @@ export default function AdminDashboardPage() {
       const map: Record<number, string> = {};
       userData.forEach(u => map[u.user_id] = u.full_name);
       setUserMap(map);
+      setChartData(buildDashboardChartData(userData, activityData));
       setActivities(activityData.slice(0, 8)); // latest 8
       setAdminActionsList(actionsData.slice(0, 8)); // latest 8
     } catch (err) {
@@ -110,6 +118,26 @@ export default function AdminDashboardPage() {
         </div>
       </div>
 
+      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 className="text-base font-bold text-slate-900">Biểu đồ tăng trưởng</h2>
+            <p className="mt-1 text-sm text-slate-500">Theo dõi tổng số user và số giao dịch được tạo trong 14 ngày gần nhất.</p>
+          </div>
+          <div className="flex flex-wrap gap-3 text-sm font-medium">
+            <span className="inline-flex items-center gap-2 text-blue-700">
+              <span className="h-2.5 w-2.5 rounded-full bg-blue-600" />
+              Tổng user
+            </span>
+            <span className="inline-flex items-center gap-2 text-emerald-700">
+              <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
+              Giao dịch tạo mới
+            </span>
+          </div>
+        </div>
+        <LineChart data={chartData} />
+      </section>
+
       {/* Quick Links */}
       <section>
         <h2 className="mb-4 text-base font-bold text-slate-900">Phím tắt quản lý</h2>
@@ -159,8 +187,8 @@ export default function AdminDashboardPage() {
           <div className="flex-1 overflow-auto p-2">
             {activities.length > 0 ? (
               <ul className="divide-y divide-slate-100">
-                {activities.map((log) => (
-                  <li key={log.id ?? Math.random()} className="p-4 hover:bg-slate-50 rounded-xl transition-colors">
+                {activities.map((log, index) => (
+                  <li key={log.activity_id ?? `activity-${log.created_at}-${index}`} className="p-4 hover:bg-slate-50 rounded-xl transition-colors">
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex items-start gap-3">
                         <div className="mt-0.5 rounded-full bg-slate-100 p-1.5 text-slate-500">
@@ -196,8 +224,8 @@ export default function AdminDashboardPage() {
           <div className="flex-1 overflow-auto p-2">
             {adminActionsList.length > 0 ? (
               <ul className="divide-y divide-slate-100">
-                {adminActionsList.map((action) => (
-                  <li key={action.id ?? Math.random()} className="p-4 hover:bg-slate-50 rounded-xl transition-colors">
+                {adminActionsList.map((action, index) => (
+                  <li key={action.admin_action_id ?? `admin-action-${action.created_at}-${index}`} className="p-4 hover:bg-slate-50 rounded-xl transition-colors">
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex items-start gap-3">
                         <div className="mt-0.5 rounded-full bg-violet-100 p-1.5 text-violet-600">
@@ -229,4 +257,99 @@ export default function AdminDashboardPage() {
       </div>
     </div>
   );
+}
+
+function buildDashboardChartData(users: AdminUser[], logs: AdminLog[]): DashboardChartPoint[] {
+  const today = startOfDay(new Date());
+  const days = Array.from({ length: 14 }, (_, index) => addDays(today, index - 13));
+  const transactionsByDay = new Map<string, number>();
+
+  logs
+    .filter((log) => log.activity_type === "CREATE_TRANSACTION")
+    .forEach((log) => {
+      const key = dayKey(new Date(log.created_at));
+      transactionsByDay.set(key, (transactionsByDay.get(key) ?? 0) + 1);
+    });
+
+  return days.map((day) => {
+    const dayEnd = addDays(day, 1).getTime() - 1;
+    const totalUsers = users.filter((item) => new Date(item.created_at).getTime() <= dayEnd).length;
+
+    return {
+      label: day.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" }),
+      users: totalUsers,
+      transactions: transactionsByDay.get(dayKey(day)) ?? 0
+    };
+  });
+}
+
+function LineChart({ data }: { data: DashboardChartPoint[] }) {
+  const width = 640;
+  const height = 220;
+  const padding = { top: 18, right: 24, bottom: 36, left: 42 };
+  const maxValue = Math.max(1, ...data.flatMap((item) => [item.users, item.transactions]));
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  const xStep = data.length > 1 ? plotWidth / (data.length - 1) : plotWidth;
+  const yFor = (value: number) => padding.top + plotHeight - (value / maxValue) * plotHeight;
+  const xFor = (index: number) => padding.left + index * xStep;
+  const userPoints = data.map((item, index) => `${xFor(index)},${yFor(item.users)}`).join(" ");
+  const transactionPoints = data.map((item, index) => `${xFor(index)},${yFor(item.transactions)}`).join(" ");
+  const yTicks = [0, Math.ceil(maxValue / 2), maxValue];
+
+  if (data.length === 0) {
+    return (
+      <div className="flex h-64 items-center justify-center rounded-2xl bg-slate-50 text-sm font-medium text-slate-500">
+        Chưa có dữ liệu để vẽ biểu đồ.
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Biểu đồ đường tổng user và giao dịch tạo mới" className="h-72 min-w-[720px] w-full">
+        <rect x="0" y="0" width={width} height={height} rx="18" fill="#f8fafc" />
+        {yTicks.map((tick) => (
+          <g key={tick}>
+            <line x1={padding.left} x2={width - padding.right} y1={yFor(tick)} y2={yFor(tick)} stroke="#e2e8f0" strokeDasharray="4 6" />
+            <text x={padding.left - 12} y={yFor(tick) + 4} textAnchor="end" className="fill-slate-500 text-[11px] font-medium">
+              {tick}
+            </text>
+          </g>
+        ))}
+        <polyline points={userPoints} fill="none" stroke="#2563eb" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+        <polyline points={transactionPoints} fill="none" stroke="#10b981" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+        {data.map((item, index) => (
+          <g key={item.label}>
+            <circle cx={xFor(index)} cy={yFor(item.users)} r="4" fill="#2563eb">
+              <title>{`${item.label}: ${item.users} user`}</title>
+            </circle>
+            <circle cx={xFor(index)} cy={yFor(item.transactions)} r="4" fill="#10b981">
+              <title>{`${item.label}: ${item.transactions} giao dịch`}</title>
+            </circle>
+            {(index === 0 || index === data.length - 1 || index % 3 === 0) && (
+              <text x={xFor(index)} y={height - 14} textAnchor="middle" className="fill-slate-500 text-[11px] font-medium">
+                {item.label}
+              </text>
+            )}
+          </g>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
+function startOfDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function addDays(date: Date, days: number): Date {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function dayKey(date: Date): string {
+  const day = startOfDay(date);
+  return `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
 }

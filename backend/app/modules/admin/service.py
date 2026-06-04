@@ -1,10 +1,11 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy import func, or_, select
+from sqlalchemy.orm import Session, selectinload
 
 from app.models.enums import (
     AccountStatus,
+    ActivityType,
     AdminActionType,
     AdminStatus,
     BookStatus,
@@ -14,6 +15,7 @@ from app.models.enums import (
     PointLedgerReason,
     RoleInTransaction,
     TransactionStatus,
+    TransactionType,
     UserRole,
 )
 from app.models.erd import (
@@ -28,6 +30,7 @@ from app.models.erd import (
     User,
 )
 from app.modules.admin.schemas import AdminPointAdjustmentRequest
+from app.modules.admin.schemas import DashboardMetricPoint
 from app.modules.admin.schemas import CourierApplicationReviewRequest
 from app.modules.points.service import InsufficientPointsError, add_point_change
 
@@ -56,9 +59,149 @@ class CourierApplicationNotFoundError(Exception):
     pass
 
 
-def list_users(db: Session, current_user: User) -> list[User]:
+def list_users(
+    db: Session,
+    current_user: User,
+    *,
+    query: str | None = None,
+    role: UserRole | None = None,
+    status: AccountStatus | None = None,
+    limit: int | None = None,
+    offset: int = 0,
+) -> list[User]:
     _ensure_admin(current_user)
-    return list(db.scalars(select(User).order_by(User.created_at.desc(), User.user_id.desc())))
+    statement = select(User).order_by(User.created_at.desc(), User.user_id.desc())
+    if query:
+        pattern = f"%{query.strip()}%"
+        statement = statement.where(
+            or_(User.full_name.ilike(pattern), User.email.ilike(pattern), User.phone.ilike(pattern))
+        )
+    if role is not None:
+        statement = statement.where(User.role == role)
+    if status is not None:
+        statement = statement.where(User.account_status == status)
+    if offset:
+        statement = statement.offset(offset)
+    if limit is not None:
+        statement = statement.limit(limit)
+    return list(db.scalars(statement))
+
+
+def list_books_for_admin(
+    db: Session,
+    current_user: User,
+    *,
+    query: str | None = None,
+    status: BookStatus | None = None,
+    category_id: int | None = None,
+    owner_id: int | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[Book]:
+    _ensure_admin(current_user)
+    statement = (
+        select(Book)
+        .options(selectinload(Book.category), selectinload(Book.owner))
+        .order_by(Book.created_at.desc(), Book.book_id.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    if query:
+        pattern = f"%{query.strip()}%"
+        statement = statement.where(or_(Book.title.ilike(pattern), Book.author.ilike(pattern)))
+    if status is not None:
+        statement = statement.where(Book.book_status == status)
+    if category_id is not None:
+        statement = statement.where(Book.category_id == category_id)
+    if owner_id is not None:
+        statement = statement.where(Book.owner_id == owner_id)
+    return list(db.scalars(statement))
+
+
+def list_transactions_for_admin(
+    db: Session,
+    current_user: User,
+    *,
+    status: TransactionStatus | None = None,
+    transaction_type: TransactionType | None = None,
+    user_id: int | None = None,
+    book_id: int | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[Transaction]:
+    _ensure_admin(current_user)
+    statement = (
+        select(Transaction)
+        .options(
+            selectinload(Transaction.book),
+            selectinload(Transaction.owner),
+            selectinload(Transaction.requester),
+            selectinload(Transaction.delivery),
+        )
+        .order_by(Transaction.requested_at.desc(), Transaction.transaction_id.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    if status is not None:
+        statement = statement.where(Transaction.transaction_status == status)
+    if transaction_type is not None:
+        statement = statement.where(Transaction.transaction_type == transaction_type)
+    if user_id is not None:
+        statement = statement.where(or_(Transaction.owner_id == user_id, Transaction.requester_id == user_id))
+    if book_id is not None:
+        statement = statement.where(Transaction.book_id == book_id)
+    return list(db.scalars(statement))
+
+
+def get_dashboard_metrics(
+    db: Session,
+    current_user: User,
+    *,
+    days: int = 14,
+) -> dict[str, object]:
+    _ensure_admin(current_user)
+    today = date.today()
+    first_day = today - timedelta(days=days - 1)
+    total_users = db.scalar(select(func.count(User.user_id))) or 0
+    pending_couriers = db.scalar(
+        select(func.count(CourierProfile.courier_id)).where(CourierProfile.courier_status == CourierStatus.PENDING)
+    ) or 0
+    activity_log_count = db.scalar(select(func.count(ActivityLog.activity_id))) or 0
+    admin_action_count = db.scalar(select(func.count(AdminAction.admin_action_id))) or 0
+
+    users = list(db.scalars(select(User.created_at)))
+    create_transaction_logs = list(
+        db.scalars(
+            select(ActivityLog.created_at).where(
+                ActivityLog.activity_type == ActivityType.CREATE_TRANSACTION,
+                ActivityLog.created_at >= datetime.combine(first_day, datetime.min.time(), tzinfo=UTC),
+            )
+        )
+    )
+    transactions_by_day: dict[date, int] = {}
+    for created_at in create_transaction_logs:
+        key = _as_utc(created_at).date()
+        transactions_by_day[key] = transactions_by_day.get(key, 0) + 1
+
+    chart = []
+    for index in range(days):
+        day = first_day + timedelta(days=index)
+        day_end = datetime.combine(day + timedelta(days=1), datetime.min.time(), tzinfo=UTC)
+        chart.append(
+            DashboardMetricPoint(
+                date=day.isoformat(),
+                total_users=sum(1 for created_at in users if _as_utc(created_at) < day_end),
+                transactions_created=transactions_by_day.get(day, 0),
+            )
+        )
+
+    return {
+        "total_users": int(total_users),
+        "pending_courier_applications": int(pending_couriers),
+        "activity_log_count": int(activity_log_count),
+        "admin_action_count": int(admin_action_count),
+        "chart": chart,
+    }
 
 
 def list_courier_applications(db: Session, current_user: User) -> list[CourierProfile]:
@@ -265,15 +408,37 @@ def adjust_user_points(
     return ledger, action
 
 
-def list_activity_logs(db: Session, current_user: User) -> list[ActivityLog]:
+def list_activity_logs(
+    db: Session,
+    current_user: User,
+    *,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[ActivityLog]:
     _ensure_admin(current_user)
-    statement = select(ActivityLog).order_by(ActivityLog.created_at.desc(), ActivityLog.activity_id.desc())
+    statement = (
+        select(ActivityLog)
+        .order_by(ActivityLog.created_at.desc(), ActivityLog.activity_id.desc())
+        .offset(offset)
+        .limit(limit)
+    )
     return list(db.scalars(statement))
 
 
-def list_admin_actions(db: Session, current_user: User) -> list[AdminAction]:
+def list_admin_actions(
+    db: Session,
+    current_user: User,
+    *,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[AdminAction]:
     _ensure_admin(current_user)
-    statement = select(AdminAction).order_by(AdminAction.created_at.desc(), AdminAction.admin_action_id.desc())
+    statement = (
+        select(AdminAction)
+        .order_by(AdminAction.created_at.desc(), AdminAction.admin_action_id.desc())
+        .offset(offset)
+        .limit(limit)
+    )
     return list(db.scalars(statement))
 
 
@@ -353,3 +518,9 @@ def _add_admin_action(
     )
     db.add(action)
     return action
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)

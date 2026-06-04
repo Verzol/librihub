@@ -42,6 +42,27 @@ class CategoryCreateRequest(BaseModel):
         return stripped or None
 
 
+class CategoryUpdateRequest(BaseModel):
+    category_name: str | None = Field(default=None, min_length=1, max_length=120)
+    category_description: str | None = None
+    is_active: bool | None = None
+
+    @field_validator("category_name")
+    @classmethod
+    def strip_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip()
+
+    @field_validator("category_description")
+    @classmethod
+    def strip_description(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
+
+
 class BookCreateRequest(BaseModel):
     category_id: int
     title: str = Field(min_length=1, max_length=255)

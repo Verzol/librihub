@@ -42,10 +42,11 @@ services:
     build:
       context: ./backend
     container_name: librihub-backend
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-librihub}:${POSTGRES_PASSWORD:-librihub}@postgres:5432/${POSTGRES_DB:-librihub}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-librihub}:${POSTGRES_PASSWORD:-librihub_password}@postgres:5432/${POSTGRES_DB:-librihub}
       MINIO_ENDPOINT: http://minio:9000
     ports:
       - "8000:8000"
