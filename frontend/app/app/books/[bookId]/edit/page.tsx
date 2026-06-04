@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
+import { BookOpen } from "lucide-react";
 import { booksApi } from "@/lib/api";
 import type { Book } from "@/lib/api/types";
 import { useAuth } from "@/lib/auth";
@@ -20,7 +21,12 @@ export default function EditBookPage() {
   if (!book) return <LoadingState />;
   return (
     <>
-      <PageHeader title="Sửa sách" description={book.title} />
+      <PageHeader
+        hero
+        heroIcon={<BookOpen className="h-3.5 w-3.5" />}
+        title="Chỉnh sửa sách"
+        description={`Cập nhật thông tin cho cuốn "${book.title}".`}
+      />
       <BookForm book={book} />
     </>
   );

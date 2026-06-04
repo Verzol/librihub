@@ -1,31 +1,42 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
   color-scheme: light;
+  --brand: #2563eb;
+  --brand-dark: #1d4ed8;
+  --brand-light: #eff6ff;
 }
 
 html,
 body {
   min-height: 100%;
-  background:
-    radial-gradient(circle at top left, rgba(219, 234, 254, 0.7), transparent 34rem),
-    linear-gradient(180deg, #f8fbff 0%, #f2f5fa 42%, #eef2f7 100%);
+  scroll-behavior: smooth;
 }
 
 body {
-  color: #1f2937;
+  background: #f0f4f9;
+  color: #0f172a;
+  font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+  font-weight: 400;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
 }
 
+/* Custom scrollbar */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #cbd5e1 #f1f5f9;
+  scrollbar-color: #cbd5e1 transparent;
 }
 
 ::-webkit-scrollbar {
-  height: 10px;
-  width: 10px;
+  height: 6px;
+  width: 6px;
 }
 
 ::-webkit-scrollbar-thumb {
@@ -33,6 +44,30 @@ body {
   border-radius: 9999px;
 }
 
-::-webkit-scrollbar-track {
-  background: #f1f5f9;
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
 }
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Smooth transitions for interactive elements */
+a, button {
+  transition-property: color, background-color, border-color, box-shadow, transform, opacity;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Focus ring */
+:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+/* Selection color */
+::selection {
+  background-color: #bfdbfe;
+  color: #1e3a8a;
+}
+

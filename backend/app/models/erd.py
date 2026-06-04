@@ -80,7 +80,6 @@ class User(Base):
     admin_profile: Mapped["AdminProfile | None"] = relationship(back_populates="user")
 
     __table_args__ = (
-        CheckConstraint("current_points >= 0", name="ck_USER_current_points_nonnegative"),
         Index("ix_USER_email", "email"),
         Index("ix_USER_phone", "phone"),
     )
@@ -264,6 +263,11 @@ class Book(Base):
     cover_image_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
 
     category: Mapped[Category] = relationship(back_populates="books")
+    owner: Mapped[User] = relationship(foreign_keys=[owner_id])
+
+    @property
+    def owner_full_name(self) -> str | None:
+        return self.owner.full_name if self.owner else None
 
     __table_args__ = (
         CheckConstraint(
@@ -342,6 +346,7 @@ class Transaction(Base):
     book: Mapped[Book] = relationship()
     owner: Mapped[User] = relationship(foreign_keys=[owner_id])
     requester: Mapped[User] = relationship(foreign_keys=[requester_id])
+    delivery: Mapped["Delivery | None"] = relationship(back_populates="transaction", uselist=False)
 
     @property
     def book_title(self) -> str | None:
@@ -358,6 +363,30 @@ class Transaction(Base):
     @property
     def requester_full_name(self) -> str | None:
         return self.requester.full_name if self.requester else None
+
+    @property
+    def pickup_address(self) -> str | None:
+        return self.delivery.pickup_address if self.delivery else None
+
+    @property
+    def receiver_address(self) -> str | None:
+        return self.delivery.receiver_address if self.delivery else None
+
+    @property
+    def pickup_lat(self) -> float | None:
+        return self.delivery.pickup_lat if self.delivery else None
+
+    @property
+    def pickup_lng(self) -> float | None:
+        return self.delivery.pickup_lng if self.delivery else None
+
+    @property
+    def receiver_lat(self) -> float | None:
+        return self.delivery.receiver_lat if self.delivery else None
+
+    @property
+    def receiver_lng(self) -> float | None:
+        return self.delivery.receiver_lng if self.delivery else None
 
     __table_args__ = (
         CheckConstraint("owner_id <> requester_id", name="ck_TRANSACTION_owner_not_requester"),
@@ -403,6 +432,8 @@ class Delivery(Base):
     picked_up_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     expected_delivery_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    transaction: Mapped[Transaction] = relationship(back_populates="delivery")
 
     __table_args__ = (
         Index("ix_DELIVERY_transaction_id", "transaction_id"),

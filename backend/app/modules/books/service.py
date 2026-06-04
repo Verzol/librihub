@@ -4,7 +4,12 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.models.enums import AccountStatus, ActivityType, BookStatus, CourierStatus, TransactionStatus, UserRole
 from app.models.erd import ActivityLog, Book, Category, CourierProfile, Transaction, User
-from app.modules.books.schemas import BookCreateRequest, BookUpdateRequest, CategoryCreateRequest
+from app.modules.books.schemas import (
+    BookCreateRequest,
+    BookUpdateRequest,
+    CategoryCreateRequest,
+    CategoryUpdateRequest,
+)
 
 
 class CategoryNotFoundError(Exception):
@@ -74,6 +79,7 @@ def get_community_leaderboard(db: Session) -> dict[str, list[object]]:
         select(CourierProfile, User.full_name)
         .join(User, User.user_id == CourierProfile.user_id)
         .where(CourierProfile.courier_status.in_([CourierStatus.AVAILABLE, CourierStatus.BUSY]))
+        .where(User.role != UserRole.ADMIN)
         .order_by(CourierProfile.successful_delivery_count.desc(), CourierProfile.registered_at.asc())
         .limit(5)
     )
@@ -81,6 +87,7 @@ def get_community_leaderboard(db: Session) -> dict[str, list[object]]:
     top_users_statement = (
         select(User)
         .where(User.account_status == AccountStatus.ACTIVE)
+        .where(User.role != UserRole.ADMIN)
         .order_by(User.current_points.desc(), User.created_at.asc())
         .limit(5)
     )
@@ -111,6 +118,48 @@ def create_category(db: Session, current_user: User, payload: CategoryCreateRequ
     return category
 
 
+def update_category(
+    db: Session,
+    current_user: User,
+    category_id: int,
+    payload: CategoryUpdateRequest,
+) -> Category:
+    if current_user.role != UserRole.ADMIN:
+        raise AdminRequiredError
+    category = db.scalar(select(Category).where(Category.category_id == category_id).with_for_update())
+    if category is None:
+        raise CategoryNotFoundError
+
+    updates = payload.model_dump(exclude_unset=True)
+    for field, value in updates.items():
+        setattr(category, field, value)
+    try:
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        raise DuplicateCategoryError from error
+    db.refresh(category)
+    return category
+
+
+def set_category_active(
+    db: Session,
+    current_user: User,
+    category_id: int,
+    *,
+    is_active: bool,
+) -> Category:
+    if current_user.role != UserRole.ADMIN:
+        raise AdminRequiredError
+    category = db.scalar(select(Category).where(Category.category_id == category_id).with_for_update())
+    if category is None:
+        raise CategoryNotFoundError
+    category.is_active = is_active
+    db.commit()
+    db.refresh(category)
+    return category
+
+
 def list_books(
     db: Session,
     current_user: User | None = None,
@@ -120,7 +169,11 @@ def list_books(
     category_id: int | None = None,
     exchange_mode: str | None = None,
 ) -> list[Book]:
-    statement = select(Book).options(selectinload(Book.category)).order_by(Book.created_at.desc())
+    statement = (
+        select(Book)
+        .options(selectinload(Book.category), selectinload(Book.owner))
+        .order_by(Book.created_at.desc())
+    )
 
     if mine:
         if not current_user:
@@ -141,10 +194,20 @@ def list_books(
     return list(db.scalars(statement))
 
 
+def list_user_books(db: Session, user_id: int) -> list[Book]:
+    statement = (
+        select(Book)
+        .options(selectinload(Book.category), selectinload(Book.owner))
+        .where(Book.owner_id == user_id, Book.book_status != BookStatus.REMOVED)
+        .order_by(Book.created_at.desc())
+    )
+    return list(db.scalars(statement))
+
+
 def get_book(db: Session, book_id: int) -> Book | None:
     statement = (
         select(Book)
-        .options(selectinload(Book.category))
+        .options(selectinload(Book.category), selectinload(Book.owner))
         .where(Book.book_id == book_id, Book.book_status != BookStatus.REMOVED)
     )
     return db.scalar(statement)

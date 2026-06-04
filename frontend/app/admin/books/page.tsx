@@ -3,35 +3,21 @@
 import { useEffect, useState } from "react";
 import { booksApi, adminApi } from "@/lib/api";
 import { errorMessage } from "@/lib/api/client";
-import type { AdminBook, Category } from "@/lib/api/types";
+import type { Book } from "@/lib/api/types";
 import { useAuth } from "@/lib/auth";
-import { Alert, Badge, Button, ConfirmButton, EmptyState, PageHeader, Select, TextInput } from "@/components/ui";
+import { Alert, Badge, ConfirmButton, EmptyState, PageHeader } from "@/components/ui";
 import { Book as BookIcon } from "lucide-react";
-
-const PAGE_SIZE = 50;
 
 export default function AdminBooksPage() {
   const { token, user } = useAuth();
-  const [books, setBooks] = useState<AdminBook[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
+  const [books, setBooks] = useState<Book[]>([]);
   const [error, setError] = useState("");
-  const [query, setQuery] = useState("");
-  const [bookStatus, setBookStatus] = useState("");
-  const [categoryId, setCategoryId] = useState("");
-  const [ownerId, setOwnerId] = useState("");
-  const [page, setPage] = useState(0);
 
   async function load() {
     if (!token || user?.role !== "ADMIN") return;
     try {
-      setBooks(await adminApi.books(token, {
-        q: query.trim(),
-        book_status: bookStatus,
-        category_id: categoryId,
-        owner_id: ownerId,
-        limit: PAGE_SIZE,
-        offset: page * PAGE_SIZE
-      }));
+      // Temporary: using public books list until admin endpoint is available
+      setBooks(await booksApi.list(token));
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -39,13 +25,7 @@ export default function AdminBooksPage() {
 
   useEffect(() => {
     void load();
-  }, [token, user?.role, query, bookStatus, categoryId, ownerId, page]);
-
-  useEffect(() => {
-    booksApi.categories()
-      .then(setCategories)
-      .catch(() => setCategories([]));
-  }, []);
+  }, [token, user?.role]);
 
   if (user?.role !== "ADMIN") return null;
 
@@ -65,7 +45,7 @@ export default function AdminBooksPage() {
         hero
         heroIcon={<BookIcon className="h-4 w-4" />}
         title="Quản lý Sách & Thể loại"
-        description="Giám sát sách trong hệ thống và xử lý sách vi phạm bằng trạng thái mềm."
+        description="Giám sát sách trong hệ thống. (Lưu ý: Chức năng đang dùng danh sách công khai tạm thời)."
         heroStat={
           <>
             <p className="text-sm font-medium text-blue-200">Tổng sách</p>
@@ -75,72 +55,6 @@ export default function AdminBooksPage() {
       />
 
       {error ? <Alert variant="error">{error}</Alert> : null}
-
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="grid grid-cols-[minmax(220px,1fr)_180px_180px_150px_auto] gap-3 max-xl:grid-cols-3 max-md:grid-cols-2 max-sm:grid-cols-1">
-          <TextInput
-            value={query}
-            onChange={(event) => {
-              setPage(0);
-              setQuery(event.target.value);
-            }}
-            placeholder="Tìm theo tên sách hoặc tác giả"
-          />
-          <Select
-            value={bookStatus}
-            onChange={(event) => {
-              setPage(0);
-              setBookStatus(event.target.value);
-            }}
-            aria-label="Lọc trạng thái sách"
-          >
-            <option value="">Tất cả trạng thái</option>
-            <option value="AVAILABLE">Có sẵn</option>
-            <option value="PENDING_TRANSACTION">Đang có giao dịch</option>
-            <option value="BORROWED">Đang mượn</option>
-            <option value="EXCHANGED">Đã trao đổi</option>
-            <option value="REMOVED">Đã ẩn</option>
-          </Select>
-          <Select
-            value={categoryId}
-            onChange={(event) => {
-              setPage(0);
-              setCategoryId(event.target.value);
-            }}
-            aria-label="Lọc thể loại"
-          >
-            <option value="">Tất cả thể loại</option>
-            {categories.map((category) => (
-              <option key={category.category_id} value={category.category_id}>
-                {category.category_name}
-              </option>
-            ))}
-          </Select>
-          <TextInput
-            value={ownerId}
-            onChange={(event) => {
-              setPage(0);
-              setOwnerId(event.target.value);
-            }}
-            type="number"
-            min="1"
-            placeholder="Owner ID"
-          />
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={() => {
-              setQuery("");
-              setBookStatus("");
-              setCategoryId("");
-              setOwnerId("");
-              setPage(0);
-            }}
-          >
-            Xóa lọc
-          </Button>
-        </div>
-      </section>
 
       <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden flex flex-col h-[600px]">
         <div className="flex-1 overflow-auto p-0">
@@ -167,28 +81,12 @@ export default function AdminBooksPage() {
                       </div>
                     </div>
                   </td>
-                  <td className="px-6 py-4">User #{item.owner_id}</td>
+                  <td className="px-6 py-4">{item.owner_full_name || `User #${item.owner_id}`}</td>
                   <td className="px-6 py-4"><Badge value={item.book_status} /></td>
                   <td className="px-6 py-4 text-right">
-                    {item.book_status === "REMOVED" ? (
-                      <ConfirmButton size="sm" confirm="Bạn có muốn khôi phục sách này?" onConfirm={() => run(() => adminApi.restoreBook(token!, item.book_id))}>
-                        Khôi phục
-                      </ConfirmButton>
-                    ) : (
-                      <ConfirmButton
-                        size="sm"
-                        variant="danger"
-                        disabled={item.book_status === "PENDING_TRANSACTION"}
-                        confirm={
-                          item.book_status === "PENDING_TRANSACTION"
-                            ? "Sách đang có giao dịch nên backend sẽ không cho ẩn."
-                            : "Bạn có chắc muốn ẩn sách này?"
-                        }
-                        onConfirm={() => run(() => adminApi.hideBook(token!, item.book_id))}
-                      >
-                        Ẩn sách
-                      </ConfirmButton>
-                    )}
+                    <ConfirmButton size="sm" variant="danger" confirm="Bạn có chắc muốn ẩn sách này?" onConfirm={() => run(() => adminApi.hideBook(token!, item.book_id))}>
+                      Ẩn sách
+                    </ConfirmButton>
                   </td>
                 </tr>
               ))}
@@ -201,20 +99,6 @@ export default function AdminBooksPage() {
               )}
             </tbody>
           </table>
-        </div>
-      </div>
-
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-sm font-medium text-slate-500">
-          Trang {page + 1} · Hiển thị tối đa {PAGE_SIZE} sách
-        </p>
-        <div className="flex gap-2">
-          <Button type="button" variant="secondary" disabled={page === 0} onClick={() => setPage((value) => Math.max(0, value - 1))}>
-            Trước
-          </Button>
-          <Button type="button" variant="secondary" disabled={books.length < PAGE_SIZE} onClick={() => setPage((value) => value + 1)}>
-            Sau
-          </Button>
         </div>
       </div>
     </div>

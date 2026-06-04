@@ -10,6 +10,7 @@ from app.modules.books.schemas import (
     CategoryCreateRequest,
     CategoryResponse,
     CategorySummaryResponse,
+    CategoryUpdateRequest,
     CommunityLeaderboardResponse,
     TopBookResponse,
     TopCourierResponse,
@@ -29,9 +30,12 @@ from app.modules.books.service import (
     list_books,
     list_categories,
     list_category_summaries,
+    list_user_books,
     publish_book,
     set_book_cover,
+    set_category_active,
     soft_delete_book,
+    update_category,
     update_book,
 )
 from app.services.storage import StorageError, upload_book_cover
@@ -117,6 +121,49 @@ def add_category(
     return CategoryResponse.model_validate(category)
 
 
+@router.patch("/admin/categories/{category_id}", response_model=CategoryResponse, tags=["admin", "books"])
+def edit_category(
+    category_id: int,
+    payload: CategoryUpdateRequest,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> CategoryResponse:
+    try:
+        category = update_category(db, current_user, category_id, payload)
+    except AdminRequiredError:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required.") from None
+    except CategoryNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found.") from None
+    except DuplicateCategoryError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Category name already exists.",
+        ) from None
+    return CategoryResponse.model_validate(category)
+
+
+@router.post("/admin/categories/{category_id}/disable", response_model=CategoryResponse, tags=["admin", "books"])
+def disable_category(category_id: int, db: DbSession, current_user: CurrentUser) -> CategoryResponse:
+    try:
+        category = set_category_active(db, current_user, category_id, is_active=False)
+    except AdminRequiredError:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required.") from None
+    except CategoryNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found.") from None
+    return CategoryResponse.model_validate(category)
+
+
+@router.post("/admin/categories/{category_id}/restore", response_model=CategoryResponse, tags=["admin", "books"])
+def restore_category(category_id: int, db: DbSession, current_user: CurrentUser) -> CategoryResponse:
+    try:
+        category = set_category_active(db, current_user, category_id, is_active=True)
+    except AdminRequiredError:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required.") from None
+    except CategoryNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found.") from None
+    return CategoryResponse.model_validate(category)
+
+
 @router.get("/books", response_model=list[BookResponse], tags=["books"])
 def read_books(
     db: DbSession,
@@ -138,6 +185,11 @@ def read_books(
         exchange_mode=exchange_mode.value if exchange_mode else None,
     )
     return [BookResponse.model_validate(book) for book in books]
+
+
+@router.get("/users/{user_id}/books", response_model=list[BookResponse], tags=["users", "books"])
+def read_user_books(user_id: int, db: DbSession, _current_user: CurrentUser) -> list[BookResponse]:
+    return [BookResponse.model_validate(book) for book in list_user_books(db, user_id)]
 
 
 @router.post(

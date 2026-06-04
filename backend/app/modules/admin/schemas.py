@@ -8,9 +8,11 @@ from app.models.enums import (
     AdminActionType,
     BookStatus,
     CourierStatus,
+    DeliveryMethod,
     PointLedgerReason,
     RoleInTransaction,
     TransactionStatus,
+    TransactionType,
     UserRole,
 )
 
@@ -48,9 +50,18 @@ class AdminTransactionResponse(BaseModel):
 
     transaction_id: int
     book_id: int
+    book_title: str | None = None
+    book_author: str | None = None
     owner_id: int
+    owner_full_name: str | None = None
     requester_id: int
+    requester_full_name: str | None = None
+    transaction_type: TransactionType
+    delivery_method: DeliveryMethod
     transaction_status: TransactionStatus
+    owner_confirmed: bool
+    requester_confirmed: bool
+    courier_confirmed: bool
     requested_at: datetime
     completed_at: datetime | None
 
@@ -133,3 +144,17 @@ class AdminActionResponse(BaseModel):
     action_type: AdminActionType
     action_description: str
     created_at: datetime
+
+
+class DashboardMetricPoint(BaseModel):
+    date: str
+    total_users: int
+    transactions_created: int
+
+
+class AdminDashboardMetricsResponse(BaseModel):
+    total_users: int
+    pending_courier_applications: int
+    activity_log_count: int
+    admin_action_count: int
+    chart: list[DashboardMetricPoint]

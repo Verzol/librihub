@@ -7,10 +7,7 @@ import type { AdminLog } from "@/lib/api/types";
 import { useAuth } from "@/lib/auth";
 import { formatDate } from "@/lib/utils";
 import { Alert, PageHeader } from "@/components/ui";
-import { Button } from "@/components/ui";
 import { Activity, ShieldAlert } from "lucide-react";
-
-const PAGE_SIZE = 50;
 
 export default function AdminLogsPage() {
   const { token, user } = useAuth();
@@ -18,15 +15,13 @@ export default function AdminLogsPage() {
   const [adminActions, setAdminActions] = useState<AdminLog[]>([]);
   const [userMap, setUserMap] = useState<Record<number, string>>({});
   const [error, setError] = useState("");
-  const [activityOffset, setActivityOffset] = useState(0);
-  const [actionOffset, setActionOffset] = useState(0);
 
   async function load() {
     if (!token || user?.role !== "ADMIN") return;
     try {
       const [activities, actions, usersList] = await Promise.all([
-        adminApi.activityLogs(token, { limit: PAGE_SIZE, offset: activityOffset }),
-        adminApi.adminActions(token, { limit: PAGE_SIZE, offset: actionOffset }),
+        adminApi.activityLogs(token),
+        adminApi.adminActions(token),
         adminApi.users(token)
       ]);
       const map: Record<number, string> = {};
@@ -41,7 +36,7 @@ export default function AdminLogsPage() {
 
   useEffect(() => {
     void load();
-  }, [token, user?.role, activityOffset, actionOffset]);
+  }, [token, user?.role]);
 
   if (user?.role !== "ADMIN") return null;
 
@@ -87,19 +82,6 @@ export default function AdminLogsPage() {
               )}
             </div>
           </div>
-          <div className="border-t border-slate-100 px-6 py-4">
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-sm font-medium text-slate-500">Trang {activityOffset / PAGE_SIZE + 1}</span>
-              <div className="flex gap-2">
-                <Button type="button" size="sm" variant="secondary" disabled={activityOffset === 0} onClick={() => setActivityOffset((value) => Math.max(0, value - PAGE_SIZE))}>
-                  Trước
-                </Button>
-                <Button type="button" size="sm" variant="secondary" disabled={activityLogs.length < PAGE_SIZE} onClick={() => setActivityOffset((value) => value + PAGE_SIZE)}>
-                  Sau
-                </Button>
-              </div>
-            </div>
-          </div>
         </div>
 
         {/* Admin Actions */}
@@ -135,19 +117,6 @@ export default function AdminLogsPage() {
               {adminActions.length === 0 && !error && (
                 <div className="p-10 text-center text-slate-500">Chưa có thao tác quản trị nào.</div>
               )}
-            </div>
-          </div>
-          <div className="border-t border-slate-100 px-6 py-4">
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-sm font-medium text-slate-500">Trang {actionOffset / PAGE_SIZE + 1}</span>
-              <div className="flex gap-2">
-                <Button type="button" size="sm" variant="secondary" disabled={actionOffset === 0} onClick={() => setActionOffset((value) => Math.max(0, value - PAGE_SIZE))}>
-                  Trước
-                </Button>
-                <Button type="button" size="sm" variant="secondary" disabled={adminActions.length < PAGE_SIZE} onClick={() => setActionOffset((value) => value + PAGE_SIZE)}>
-                  Sau
-                </Button>
-              </div>
             </div>
           </div>
         </div>

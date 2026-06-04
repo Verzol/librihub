@@ -54,7 +54,7 @@ def add_transaction(
     except DeliveryAreaNotSupportedError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Free courier only supports locations within 3km of UET.",
+            detail="Free courier only supports configured campus handoff points near UET.",
         ) from None
     return TransactionResponse.model_validate(transaction)
 
@@ -104,7 +104,7 @@ def accept(
     except DeliveryAreaNotSupportedError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Free courier only supports locations within 3km of UET.",
+            detail="Free courier only supports configured campus handoff points near UET.",
         ) from None
     return TransactionResponse.model_validate(transaction)
 
@@ -175,6 +175,11 @@ def confirm_receipt(transaction_id: int, db: DbSession, current_user: CurrentUse
             status_code=status.HTTP_409_CONFLICT,
             detail="This transaction cannot be marked as received in its current state.",
         ) from None
+    except InsufficientPointsError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Requester has insufficient points to start this borrow transaction.",
+        ) from None
     return TransactionResponse.model_validate(transaction)
 
 
@@ -220,11 +225,6 @@ def confirm_return(transaction_id: int, db: DbSession, current_user: CurrentUser
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="This transaction cannot be confirmed returned in its current state.",
-        ) from None
-    except InsufficientPointsError:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Requester has insufficient points for late return penalty.",
         ) from None
     return TransactionResponse.model_validate(transaction)
 

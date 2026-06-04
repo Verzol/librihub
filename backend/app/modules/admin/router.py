@@ -1,10 +1,12 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 
 from app.core.dependencies import CurrentUser, DbSession
+from app.models.enums import AccountStatus, BookStatus, TransactionStatus, TransactionType, UserRole
 from app.modules.admin.schemas import (
     ActivityLogResponse,
     AdminActionResponse,
     AdminBookResponse,
+    AdminDashboardMetricsResponse,
     AdminPointAdjustmentRequest,
     AdminPointAdjustmentResponse,
     AdminTransactionResponse,
@@ -25,7 +27,10 @@ from app.modules.admin.service import (
     hide_book,
     list_activity_logs,
     list_admin_actions,
+    get_dashboard_metrics,
+    list_books_for_admin,
     list_courier_applications,
+    list_transactions_for_admin,
     list_users,
     lock_user,
     reject_courier_application,
@@ -38,9 +43,100 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 
 @router.get("/users", response_model=list[AdminUserResponse])
-def read_users(db: DbSession, current_user: CurrentUser) -> list[AdminUserResponse]:
+def read_users(
+    db: DbSession,
+    current_user: CurrentUser,
+    q: str | None = Query(default=None, min_length=1, max_length=255),
+    role: UserRole | None = None,
+    account_status: AccountStatus | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> list[AdminUserResponse]:
     try:
-        return [AdminUserResponse.model_validate(user) for user in list_users(db, current_user)]
+        return [
+            AdminUserResponse.model_validate(user)
+            for user in list_users(
+                db,
+                current_user,
+                query=q,
+                role=role,
+                status=account_status,
+                limit=limit,
+                offset=offset,
+            )
+        ]
+    except AdminRequiredError:
+        raise _admin_required_error() from None
+
+
+@router.get("/dashboard-metrics", response_model=AdminDashboardMetricsResponse)
+def read_dashboard_metrics(
+    db: DbSession,
+    current_user: CurrentUser,
+    days: int = Query(default=14, ge=1, le=90),
+) -> AdminDashboardMetricsResponse:
+    try:
+        return AdminDashboardMetricsResponse.model_validate(
+            get_dashboard_metrics(db, current_user, days=days)
+        )
+    except AdminRequiredError:
+        raise _admin_required_error() from None
+
+
+@router.get("/books", response_model=list[AdminBookResponse])
+def read_books(
+    db: DbSession,
+    current_user: CurrentUser,
+    q: str | None = Query(default=None, min_length=1, max_length=255),
+    book_status: BookStatus | None = None,
+    category_id: int | None = None,
+    owner_id: int | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> list[AdminBookResponse]:
+    try:
+        return [
+            AdminBookResponse.model_validate(book)
+            for book in list_books_for_admin(
+                db,
+                current_user,
+                query=q,
+                status=book_status,
+                category_id=category_id,
+                owner_id=owner_id,
+                limit=limit,
+                offset=offset,
+            )
+        ]
+    except AdminRequiredError:
+        raise _admin_required_error() from None
+
+
+@router.get("/transactions", response_model=list[AdminTransactionResponse])
+def read_transactions(
+    db: DbSession,
+    current_user: CurrentUser,
+    transaction_status: TransactionStatus | None = None,
+    transaction_type: TransactionType | None = None,
+    user_id: int | None = None,
+    book_id: int | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> list[AdminTransactionResponse]:
+    try:
+        return [
+            AdminTransactionResponse.model_validate(transaction)
+            for transaction in list_transactions_for_admin(
+                db,
+                current_user,
+                status=transaction_status,
+                transaction_type=transaction_type,
+                user_id=user_id,
+                book_id=book_id,
+                limit=limit,
+                offset=offset,
+            )
+        ]
     except AdminRequiredError:
         raise _admin_required_error() from None
 
@@ -229,11 +325,13 @@ def adjust_points(
 def read_activity_logs(
     db: DbSession,
     current_user: CurrentUser,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
 ) -> list[ActivityLogResponse]:
     try:
         return [
             ActivityLogResponse.model_validate(log)
-            for log in list_activity_logs(db, current_user)
+            for log in list_activity_logs(db, current_user, limit=limit, offset=offset)
         ]
     except AdminRequiredError:
         raise _admin_required_error() from None
@@ -243,11 +341,13 @@ def read_activity_logs(
 def read_admin_actions(
     db: DbSession,
     current_user: CurrentUser,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
 ) -> list[AdminActionResponse]:
     try:
         return [
             AdminActionResponse.model_validate(action)
-            for action in list_admin_actions(db, current_user)
+            for action in list_admin_actions(db, current_user, limit=limit, offset=offset)
         ]
     except AdminRequiredError:
         raise _admin_required_error() from None

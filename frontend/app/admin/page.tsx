@@ -5,7 +5,7 @@ import Link from "next/link";
 import { adminApi } from "@/lib/api";
 import { errorMessage } from "@/lib/api/client";
 import { useAuth } from "@/lib/auth";
-import type { AdminLog } from "@/lib/api/types";
+import type { AdminLog, AdminUser } from "@/lib/api/types";
 import { Alert, Badge, PageHeader } from "@/components/ui";
 import { Activity, Book, ShieldAlert, Truck, UserCheck, UserCog, Users, Repeat } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
@@ -29,26 +29,22 @@ export default function AdminDashboardPage() {
   async function load() {
     if (!token || user?.role !== "ADMIN") return;
     try {
-      const [metrics, userData, activityData, actionsData] = await Promise.all([
-        adminApi.dashboardMetrics(token, 14),
+      const [userData, appData, activityData, actionsData] = await Promise.all([
         adminApi.users(token),
+        adminApi.courierApplications(token),
         adminApi.activityLogs(token),
         adminApi.adminActions(token)
       ]);
       setStats({
-        users: metrics.total_users,
-        couriers: metrics.pending_courier_applications,
-        activityLogs: metrics.activity_log_count,
-        adminActions: metrics.admin_action_count
+        users: userData.length,
+        couriers: appData.filter(a => a.courier_status === "PENDING").length,
+        activityLogs: activityData.length,
+        adminActions: actionsData.length
       });
       const map: Record<number, string> = {};
       userData.forEach(u => map[u.user_id] = u.full_name);
       setUserMap(map);
-      setChartData(metrics.chart.map((point) => ({
-        label: new Date(`${point.date}T00:00:00`).toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" }),
-        users: point.total_users,
-        transactions: point.transactions_created
-      })));
+      setChartData(buildDashboardChartData(userData, activityData));
       setActivities(activityData.slice(0, 8)); // latest 8
       setAdminActionsList(actionsData.slice(0, 8)); // latest 8
     } catch (err) {
@@ -263,6 +259,30 @@ export default function AdminDashboardPage() {
   );
 }
 
+function buildDashboardChartData(users: AdminUser[], logs: AdminLog[]): DashboardChartPoint[] {
+  const today = startOfDay(new Date());
+  const days = Array.from({ length: 14 }, (_, index) => addDays(today, index - 13));
+  const transactionsByDay = new Map<string, number>();
+
+  logs
+    .filter((log) => log.activity_type === "CREATE_TRANSACTION")
+    .forEach((log) => {
+      const key = dayKey(new Date(log.created_at));
+      transactionsByDay.set(key, (transactionsByDay.get(key) ?? 0) + 1);
+    });
+
+  return days.map((day) => {
+    const dayEnd = addDays(day, 1).getTime() - 1;
+    const totalUsers = users.filter((item) => new Date(item.created_at).getTime() <= dayEnd).length;
+
+    return {
+      label: day.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" }),
+      users: totalUsers,
+      transactions: transactionsByDay.get(dayKey(day)) ?? 0
+    };
+  });
+}
+
 function LineChart({ data }: { data: DashboardChartPoint[] }) {
   const width = 640;
   const height = 220;
@@ -317,4 +337,19 @@ function LineChart({ data }: { data: DashboardChartPoint[] }) {
       </svg>
     </div>
   );
+}
+
+function startOfDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function addDays(date: Date, days: number): Date {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function dayKey(date: Date): string {
+  const day = startOfDay(date);
+  return `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
 }

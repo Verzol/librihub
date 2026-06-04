@@ -333,6 +333,8 @@ def test_admin_cancel_free_courier_transaction_releases_courier(client: TestClie
         },
         headers=owner_headers,
     )
+    client.post(f"/api/v1/transactions/{transaction['transaction_id']}/confirm", headers=owner_headers)
+    client.post(f"/api/v1/transactions/{transaction['transaction_id']}/confirm", headers=requester_headers)
     delivery_response = client.post(
         f"/api/v1/deliveries/transactions/{transaction['transaction_id']}/accept",
         json={},

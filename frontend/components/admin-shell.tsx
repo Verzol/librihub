@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { AlertTriangle, ArrowLeft, Book, History, LayoutDashboard, Loader2, LogOut, Repeat, ShieldCheck, Star, Truck, Users, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Book, History, LayoutDashboard, LogOut, Repeat, ShieldCheck, Star, Truck, Users, X } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui";
@@ -19,37 +19,20 @@ const navigation = [
 ];
 
 export function AdminShell({ children }: { children: React.ReactNode }) {
-  const { user, isLoading, logout } = useAuth();
+  const { user, logout } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
 
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
-
-  useEffect(() => {
-    if (!isLoading && !user) {
-      router.replace(`/login?returnTo=${encodeURIComponent(pathname)}`);
-    }
-  }, [isLoading, pathname, router, user]);
 
   function onLogout() {
     logout();
     router.replace("/login");
   }
 
-  if (isLoading || !user) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-50">
-        <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm font-semibold text-slate-600 shadow-sm">
-          <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
-          Đang kiểm tra quyền truy cập
-        </div>
-      </div>
-    );
-  }
-
-  // Basic role guard to prevent visual flashing of admin content for non-admins.
+  // Basic role guard to prevent visual flashing of admin content for non-admins
   // The actual data is protected by the backend.
-  if (user.role !== "ADMIN") {
+  if (user && user.role !== "ADMIN") {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50">
         <div className="text-center">

@@ -61,6 +61,7 @@ export const booksApi = {
   categorySummary: () => apiFetch<CategorySummary[]>("/api/v1/categories/summary"),
   leaderboard: () => apiFetch<CommunityLeaderboard>("/api/v1/community/leaderboard"),
   list: (token: string | null, params = "") => apiFetch<Book[]>(`/api/v1/books${params}`, { token }),
+  forUser: (token: string, userId: number) => apiFetch<Book[]>(`/api/v1/users/${userId}/books`, { token }),
   detail: (token: string | null, id: number) => apiFetch<Book>(`/api/v1/books/${id}`, { token }),
   create: (token: string, input: BookInput) => apiFetch<Book>("/api/v1/books", { token, method: "POST", body: input }),
   update: (token: string, id: number, input: Partial<BookInput>) =>
@@ -111,6 +112,7 @@ export const pointsApi = {
 export const deliveriesApi = {
   available: (token: string) => apiFetch<DeliveryTask[]>("/api/v1/deliveries/available", { token }),
   mine: (token: string) => apiFetch<Delivery[]>("/api/v1/deliveries/me", { token }),
+  forUser: (token: string, userId: number) => apiFetch<Delivery[]>(`/api/v1/users/${userId}/deliveries`, { token }),
   accept: (token: string, transactionId: number, input: { expected_delivery_at?: string | null }) =>
     apiFetch<Delivery>(`/api/v1/deliveries/transactions/${transactionId}/accept`, { token, method: "POST", body: input }),
   action: (token: string, id: number, action: "pickup" | "delivered" | "failed") =>

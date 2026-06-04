@@ -1,13 +1,27 @@
 "use client";
 
+import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { BadgeCheck, BookOpen, Check, ChevronRight, Clock, Flame, MessageSquareText, Send, ShieldCheck, Sparkles, Star, Trophy } from "lucide-react";
+import {
+  ArrowRight,
+  Award,
+  BookOpen,
+  Check,
+  Clock,
+  MessageSquareText,
+  Send,
+  ShieldCheck,
+  Star,
+  Trophy,
+  Truck,
+  Users
+} from "lucide-react";
 import { booksApi, reviewsApi, transactionsApi } from "@/lib/api";
 import { errorMessage } from "@/lib/api/client";
 import type { CommunityLeaderboard, Review, ReviewType, Transaction } from "@/lib/api/types";
 import { useAuth } from "@/lib/auth";
 import { cn, formatDate } from "@/lib/utils";
-import { Alert, Button, Card, EmptyState, Field, PageHeader, Select, TextArea } from "@/components/ui";
+import { Alert, Badge, Button, Card, EmptyState, Field, PageHeader, Select, TextArea } from "@/components/ui";
 
 const quickTags = ["Đúng hẹn", "Thân thiện", "Giữ sách tốt", "Phản hồi nhanh"];
 
@@ -18,8 +32,6 @@ export default function ReviewsPage() {
   const [leaderboard, setLeaderboard] = useState<CommunityLeaderboard | null>(null);
   const [rating, setRating] = useState(5);
   const [reviewContent, setReviewContent] = useState("");
-  const [showAllReviews, setShowAllReviews] = useState(false);
-  const [showAllReviewable, setShowAllReviewable] = useState(false);
   const [error, setError] = useState("");
 
   async function load() {
@@ -44,44 +56,57 @@ export default function ReviewsPage() {
     void load();
   }, [token, user?.user_id]);
 
+  const receivedReviews = useMemo(
+    () => reviews.filter((review) => review.reviewee_user_id === user?.user_id),
+    [reviews, user?.user_id]
+  );
+  const sentReviewKeys = useMemo(
+    () =>
+      new Set(
+        reviews
+          .filter((review) => review.reviewer_user_id === user?.user_id)
+          .map((review) => reviewKey(review.transaction_id, review.reviewee_user_id, review.review_type))
+      ),
+    [reviews, user?.user_id]
+  );
   const reviewable = useMemo(
-    () => transactions.filter((tx) => tx.owner_id === user?.user_id || tx.requester_id === user?.user_id),
-    [transactions, user]
+    () =>
+      transactions.filter((tx) => {
+        if (!user) return false;
+        if (tx.owner_id !== user.user_id && tx.requester_id !== user.user_id) return false;
+        const revieweeId = tx.owner_id === user.user_id ? tx.requester_id : tx.owner_id;
+        const type: ReviewType = tx.owner_id === user.user_id ? "REQUESTER_REVIEW" : "OWNER_REVIEW";
+        return !sentReviewKeys.has(reviewKey(tx.transaction_id, revieweeId, type));
+      }),
+    [transactions, user, sentReviewKeys]
   );
 
-  const averageRating = reviews.length
+  const averageReceivedRating = receivedReviews.length
+    ? receivedReviews.reduce((total, review) => total + review.rating_score, 0) / receivedReviews.length
+    : null;
+  const communityAverage = reviews.length
     ? reviews.reduce((total, review) => total + review.rating_score, 0) / reviews.length
     : null;
   const completedCount = transactions.length;
-  const trustPoints = user?.current_points ?? null;
   const onTimeTransactions = transactions.filter((tx) => tx.late_days === 0).length;
   const onTimeRate = completedCount ? Math.round((onTimeTransactions / completedCount) * 100) : null;
-  const visibleReviews = (showAllReviews ? reviews : reviews.slice(0, 4)).map((review) => ({
-    name: review.reviewer_full_name ?? "Người đánh giá",
-    book: review.book_title
-      ? `${review.book_title}${review.book_author ? ` - ${review.book_author}` : ""}`
-      : transactionLabel(transactions.find((tx) => tx.transaction_id === review.transaction_id) ?? null, user?.user_id),
-    date: formatDate(review.created_at),
-    content: review.review_content || "Không có nội dung đánh giá.",
-    rating: review.rating_score
-  }));
+
   async function submit(form: HTMLFormElement) {
     if (!token || !user) return;
-    const data = new FormData(form);
-    const transactionId = Number(data.get("transaction_id"));
+    const transactionId = Number(new FormData(form).get("transaction_id"));
     const tx = transactions.find((item) => item.transaction_id === transactionId);
     if (!tx) return;
 
-    const reviewee = tx.owner_id === user.user_id ? tx.requester_id : tx.owner_id;
+    const revieweeId = tx.owner_id === user.user_id ? tx.requester_id : tx.owner_id;
     const reviewType: ReviewType = tx.owner_id === user.user_id ? "REQUESTER_REVIEW" : "OWNER_REVIEW";
 
     try {
       setError("");
       await reviewsApi.create(token, {
         transaction_id: transactionId,
-        reviewee_user_id: reviewee,
+        reviewee_user_id: revieweeId,
         rating_score: rating,
-        review_content: reviewContent || null,
+        review_content: reviewContent.trim() || null,
         review_type: reviewType
       });
       form.reset();
@@ -96,268 +121,379 @@ export default function ReviewsPage() {
   return (
     <>
       <PageHeader
-        title="Cộng đồng"
-        description="Nơi bạn đánh giá lẫn nhau, xây dựng uy tín và chia sẻ về sách."
+        hero
+        heroIcon={<Users className="h-3.5 w-3.5" />}
+        title="Uy tín & Đánh giá"
+        description="Đánh giá sau mỗi giao dịch, xem độ uy tín của thành viên và khám phá những cuốn sách được quan tâm nhất trong thư viện."
+        heroStat={
+          <>
+            <p className="text-sm font-medium text-blue-200">Trung bình cộng đồng</p>
+            <div className="mt-1 text-4xl font-bold text-white">
+              {communityAverage === null ? "-" : communityAverage.toFixed(1)}
+            </div>
+            <p className="mt-1 text-sm text-blue-200">{reviews.length} đánh giá hệ thống</p>
+          </>
+        }
       />
+      <div className="space-y-5">
       {error ? <Alert variant="error">{error}</Alert> : null}
 
-      <section className="grid grid-cols-4 gap-4 max-xl:grid-cols-2 max-md:grid-cols-1">
+      <section className="mb-6 grid grid-cols-4 gap-4 max-lg:grid-cols-2 max-sm:grid-cols-1">
         <MetricCard
-          title="Điểm uy tín"
-          value={trustPoints === null ? "-" : `${trustPoints} điểm`}
-          detail={user ? "Lấy từ USER.current_points" : "Đăng nhập để xem điểm của bạn"}
+          title="Điểm hiện tại"
+          value={user ? `${user.current_points}` : "-"}
+          suffix=""
+          detail={user ? "LibriPoint trong ví" : "Chưa đăng nhập"}
           icon={ShieldCheck}
           tone="blue"
         />
         <MetricCard
-          title="Đánh giá trung bình"
-          value={averageRating === null ? "-" : `${averageRating.toFixed(1)}/5`}
-          detail={averageRating === null ? "Chưa có đánh giá từ database" : <Stars value={Math.round(averageRating)} />}
+          title="Uy tín của bạn"
+          value={averageReceivedRating === null ? "-" : averageReceivedRating.toFixed(1)}
+          suffix={averageReceivedRating === null ? "" : "/5"}
+          detail={receivedReviews.length ? `${receivedReviews.length} đánh giá đã nhận` : "Chưa nhận đánh giá"}
           icon={Star}
           tone="amber"
+          rating={averageReceivedRating ?? undefined}
         />
         <MetricCard
-          title="Giao dịch thành công"
+          title="Đã giao dịch"
           value={String(completedCount)}
-          detail="Tổng số giao dịch"
-          icon={BadgeCheck}
+          detail="Giao dịch thành công"
+          icon={Award}
           tone="emerald"
         />
         <MetricCard
-          title="Tỉ lệ đúng hẹn"
-          value={onTimeRate === null ? "-" : `${onTimeRate}%`}
-          detail={completedCount ? `${onTimeTransactions}/${completedCount} giao dịch không trễ hạn` : "Chưa có giao dịch hoàn tất"}
+          title="Tỷ lệ đúng hạn"
+          value={onTimeRate === null ? "-" : `${onTimeRate}`}
+          suffix={onTimeRate === null ? "" : "%"}
+          detail={completedCount ? `${onTimeTransactions}/${completedCount} đúng hạn` : "Chưa có giao dịch"}
           icon={Clock}
           tone="violet"
         />
       </section>
 
-      <section className="mt-4 grid grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] gap-4 max-xl:grid-cols-1">
-        <Card>
-          <div className="flex items-center gap-2">
-            <MessageSquareText className="h-5 w-5 text-blue-700" />
-            <h2 className="text-base font-bold text-slate-900">Tạo đánh giá</h2>
-          </div>
-          <form
-            id="community-review-form"
-            className="mt-4 flex flex-col gap-3"
-            onSubmit={(event: FormEvent<HTMLFormElement>) => {
-              event.preventDefault();
-              void submit(event.currentTarget);
-            }}
-          >
-            <Field label="Chọn giao dịch">
-              <Select name="transaction_id" required disabled={!token || reviewable.length === 0}>
-                <option value="">
-                  {token ? "Chọn giao dịch đã hoàn tất" : "Đăng nhập để chọn giao dịch"}
-                </option>
-                {reviewable.map((tx) => (
-                  <option key={tx.transaction_id} value={tx.transaction_id}>
-                    {transactionLabel(tx, user?.user_id)}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <div>
-              <p className="text-xs font-semibold text-slate-600">Đánh giá của bạn</p>
-              <div className="mt-2 flex items-center gap-1">
-                {[1, 2, 3, 4, 5].map((item) => (
-                  <button
-                    key={item}
-                    type="button"
-                    aria-label={`${item} sao`}
-                    onClick={() => setRating(item)}
-                    className="flex h-9 w-9 items-center justify-center rounded-full transition-colors hover:bg-amber-50"
-                  >
-                    <Star
-                      className={cn(
-                        "h-6 w-6",
-                        item <= rating ? "fill-amber-400 text-amber-400" : "text-slate-300"
-                      )}
-                    />
-                  </button>
-                ))}
-              </div>
-            </div>
-            <Field label="Nội dung">
-              <TextArea
-                name="review_content"
-                placeholder="Chia sẻ trải nghiệm của bạn về giao dịch này..."
-                value={reviewContent}
-                onChange={(event) => setReviewContent(event.target.value)}
-                disabled={!token || reviewable.length === 0}
-              />
-            </Field>
-            <div className="flex flex-wrap gap-2">
-              {quickTags.map((tag) => (
-                <button
-                  key={tag}
-                  type="button"
-                  onClick={() => setReviewContent((current) => appendQuickTag(current, tag))}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-600 transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
-                >
-                  <Check className="h-3.5 w-3.5" />
-                  {tag}
-                </button>
-              ))}
-            </div>
-            <Button disabled={!token || reviewable.length === 0}>
-              <Send className="h-4 w-4" />
-              Gửi đánh giá
-            </Button>
-          </form>
-        </Card>
-
-        <Card>
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <h2 className="text-base font-bold text-slate-900">Đánh giá cộng đồng</h2>
-            {reviews.length > 4 ? (
-              <button
-                className="text-xs font-bold text-blue-700 transition-colors hover:text-blue-900"
-                type="button"
-                onClick={() => setShowAllReviews((current) => !current)}
-              >
-                {showAllReviews ? "Thu gọn" : "Xem tất cả"}
-              </button>
-            ) : null}
-          </div>
+      <section>
+        <div className="mb-3 flex items-center justify-between gap-3 max-sm:flex-col max-sm:items-start">
           <div>
-            <div className="max-h-[520px] overflow-y-auto divide-y divide-slate-100 rounded-2xl border border-slate-200 bg-white">
-              {visibleReviews.length === 0 ? (
-                <div className="p-4">
-                  <EmptyState title="Chưa có đánh giá từ database">
-                    Khi thành viên tạo đánh giá sau giao dịch hoàn tất, đánh giá sẽ xuất hiện tại đây.
-                  </EmptyState>
-                </div>
-              ) : (
-                visibleReviews.map((review, index) => (
-                  <div key={`${review.name}-${index}`} className="flex gap-3 p-4">
-                    <Avatar name={review.name} index={index} />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <h3 className="text-sm font-bold text-slate-900">{review.name}</h3>
-                          <p className="text-xs text-slate-500">{review.book}</p>
-                        </div>
-                        <div className="text-right">
-                          <Stars value={review.rating} size="sm" />
-                          <p className="mt-1 text-xs text-slate-400">{review.date}</p>
-                        </div>
-                      </div>
-                      <p className="mt-2 text-sm leading-6 text-slate-700">{review.content}</p>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
+            <h2 className="text-lg font-semibold text-slate-950">Bảng xếp hạng cộng đồng</h2>
+            <p className="mt-1 text-base text-slate-500">Sách được quan tâm, người giao uy tín và thành viên có LibriPoint nổi bật.</p>
           </div>
-        </Card>
-      </section>
-
-      <section className="mt-4 grid grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] gap-4 max-xl:grid-cols-1">
-        <Card>
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="text-base font-bold text-slate-900">Giao dịch chờ đánh giá</h2>
-            {reviewable.length > 3 ? (
-              <button
-                className="text-xs font-bold text-blue-700 transition-colors hover:text-blue-900"
-                type="button"
-                onClick={() => setShowAllReviewable((current) => !current)}
-              >
-                {showAllReviewable ? "Thu gọn" : "Xem tất cả"}
-              </button>
-            ) : null}
-          </div>
-          <div className="mt-4 space-y-3">
-            {reviewable.length === 0 ? (
-              <EmptyState title="Chưa có giao dịch chờ đánh giá">
-                Các giao dịch đã hoàn tất sẽ xuất hiện tại đây.
-              </EmptyState>
-            ) : (
-              (showAllReviewable ? reviewable : reviewable.slice(0, 3)).map((tx) => (
-                <div key={tx.transaction_id} className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3">
-                  <div className="flex h-12 w-10 items-center justify-center rounded-xl bg-amber-50 text-amber-700">
-                    <BookOpen className="h-5 w-5" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-bold text-slate-900">{tx.book_title ?? `Sách #${tx.book_id}`}</div>
-                    <p className="text-xs text-slate-500">{transactionPartnerLabel(tx, user?.user_id)}</p>
-                  </div>
-                  <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">Hoàn tất</span>
-                  <ChevronRight className="h-4 w-4 text-slate-300" />
-                </div>
-              ))
-            )}
-          </div>
-        </Card>
-
-        <div className="grid grid-cols-2 gap-4 max-lg:grid-cols-1">
+          <span className="text-sm font-medium text-slate-400">Cập nhật từ dữ liệu hệ thống</span>
+        </div>
+        <div className="grid grid-cols-3 gap-4 max-xl:grid-cols-1">
           <LeaderboardPanel
-            title="Top thành viên uy tín"
-            icon={Trophy}
-            initialLimit={3}
-            items={(leaderboard?.top_point_users ?? []).map((member) => ({
-              id: member.user_id,
-              title: member.full_name,
-              subtitle: "5.0",
-              metric: `${member.current_points} điểm`
-            }))}
-            empty="Chưa có dữ liệu thành viên."
-          />
-          <LeaderboardPanel
-            title="Sách được quan tâm"
-            icon={Flame}
-            initialLimit={2}
+            title="Top sách được mượn"
+            icon={BookOpen}
             items={(leaderboard?.top_books ?? []).map((book) => ({
               id: book.book_id,
               title: book.title,
-              subtitle: book.author,
-              metric: `${book.borrow_count} giao dịch hoàn tất`,
-              imageUrl: book.cover_image_url
+              subtitle: `${book.author}${book.category_name ? ` - ${book.category_name}` : ""}`,
+              metric: `${book.borrow_count} lượt`,
+              imageUrl: book.cover_image_url,
+              href: `/app/books/${book.book_id}`
             }))}
-            empty="Chưa có sách được quan tâm."
+            empty="Chưa có sách hoàn tất giao dịch."
+          />
+          <LeaderboardPanel
+            title="Top người giao uy tín"
+            icon={Truck}
+            items={(leaderboard?.top_couriers ?? []).map((courier) => ({
+              id: courier.user_id,
+              title: courier.full_name,
+              subtitle: courier.delivery_area,
+              metric: `${courier.successful_delivery_count} đơn`,
+              href: `/app/users/${courier.user_id}`
+            }))}
+            empty="Chưa có courier được duyệt."
+          />
+          <LeaderboardPanel
+            title="Top điểm cao"
+            icon={Trophy}
+            items={(leaderboard?.top_point_users ?? []).map((member) => ({
+              id: member.user_id,
+              title: member.full_name,
+              metric: `${member.current_points} điểm`,
+              href: `/app/users/${member.user_id}`
+            }))}
+            empty="Chưa có dữ liệu thành viên."
           />
         </div>
       </section>
 
-      <footer className="mt-8 flex items-center justify-center gap-3 pb-2 text-sm font-semibold text-slate-500">
-        <BookOpen className="h-5 w-5 text-blue-700" />
-        LibriHub
-        <span className="h-4 w-px bg-slate-300" />
-        <span>Kết nối yêu thương qua từng trang sách</span>
-        <Sparkles className="h-4 w-4 text-blue-600" />
-      </footer>
+      <section className="grid grid-cols-[380px_minmax(0,1fr)] gap-5 max-xl:grid-cols-1">
+        <div className="space-y-5">
+          <ReviewComposer
+            token={token}
+            reviewable={reviewable}
+            rating={rating}
+            reviewContent={reviewContent}
+            onRatingChange={setRating}
+            onReviewContentChange={setReviewContent}
+            onSubmit={submit}
+            userId={user?.user_id}
+          />
+          <ReviewableList transactions={reviewable} currentUserId={user?.user_id} />
+        </div>
+
+        <div className="space-y-5">
+          <CommunityFeed reviews={reviews} communityAverage={communityAverage} />
+        </div>
+      </section>
+      </div>
     </>
+  );
+}
+
+function ReviewComposer({
+  token,
+  reviewable,
+  rating,
+  reviewContent,
+  onRatingChange,
+  onReviewContentChange,
+  onSubmit,
+  userId
+}: {
+  token: string | null;
+  reviewable: Transaction[];
+  rating: number;
+  reviewContent: string;
+  onRatingChange: (value: number) => void;
+  onReviewContentChange: (value: string) => void;
+  onSubmit: (form: HTMLFormElement) => Promise<void>;
+  userId?: number;
+}) {
+  return (
+    <Card className="p-5">
+      <div className="flex items-start gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-100">
+          <MessageSquareText className="h-5 w-5" />
+        </div>
+        <div>
+          <h2 className="text-lg font-medium text-slate-950">Tạo đánh giá</h2>
+          <p className="mt-1 text-sm leading-6 text-slate-500">
+            Chỉ các giao dịch đã hoàn tất và bạn chưa đánh giá mới xuất hiện ở đây.
+          </p>
+        </div>
+      </div>
+
+      <form
+        id="community-review-form"
+        className="mt-5 flex flex-col gap-4"
+        onSubmit={(event: FormEvent<HTMLFormElement>) => {
+          event.preventDefault();
+          void onSubmit(event.currentTarget);
+        }}
+      >
+        <Field label="Giao dịch">
+          <Select
+            name="transaction_id"
+            required
+            disabled={!token || reviewable.length === 0}
+            className="h-12 rounded-2xl border-slate-200 bg-slate-50/70 px-4 text-sm shadow-sm transition-colors focus:bg-white"
+          >
+            <option value="">
+              {token ? "Chọn giao dịch chưa đánh giá" : "Đăng nhập để chọn giao dịch"}
+            </option>
+            {reviewable.map((tx) => (
+              <option key={tx.transaction_id} value={tx.transaction_id}>
+                {transactionLabel(tx, userId)}
+              </option>
+            ))}
+          </Select>
+        </Field>
+
+        <div>
+          <p className="text-sm font-medium text-slate-700">Điểm đánh giá</p>
+          <div className="mt-2 flex items-center gap-2">
+            {[1, 2, 3, 4, 5].map((item) => (
+              <button
+                key={item}
+                type="button"
+                aria-label={`${item} sao`}
+                onClick={() => onRatingChange(item)}
+                className="flex h-9 w-9 items-center justify-center rounded-xl transition-colors hover:bg-amber-50"
+              >
+                <Star className={cn("h-6 w-6", item <= rating ? "fill-amber-400 text-amber-400" : "text-slate-300")} />
+              </button>
+            ))}
+            <span className="ml-1 text-base font-medium text-slate-900">{rating}/5</span>
+          </div>
+        </div>
+
+        <Field label="Nội dung">
+          <TextArea
+            name="review_content"
+            placeholder="Chia sẻ trải nghiệm thật về việc giữ sách, đúng hẹn, giao nhận hoặc thái độ trao đổi..."
+            value={reviewContent}
+            onChange={(event) => onReviewContentChange(event.target.value)}
+            disabled={!token || reviewable.length === 0}
+            className="min-h-32 rounded-2xl border-slate-200 bg-slate-50/70 text-sm leading-7 shadow-sm transition-colors focus:bg-white"
+          />
+        </Field>
+
+        <div className="flex flex-wrap gap-2">
+          {quickTags.map((tag) => (
+            <button
+              key={tag}
+              type="button"
+              onClick={() => onReviewContentChange(appendQuickTag(reviewContent, tag))}
+              className="inline-flex h-8 items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 text-sm font-medium text-slate-600 transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+            >
+              <Check className="h-4 w-4" />
+              {tag}
+            </button>
+          ))}
+        </div>
+
+        <Button disabled={!token || reviewable.length === 0} className="h-11 text-sm">
+          <Send className="h-5 w-5" />
+          Gửi đánh giá
+        </Button>
+      </form>
+    </Card>
+  );
+}
+
+function CommunityFeed({
+  reviews,
+  communityAverage
+}: {
+  reviews: Review[];
+  communityAverage: number | null;
+}) {
+  return (
+    <Card className="p-5">
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-medium text-slate-950">Đánh giá cộng đồng</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            {reviews.length} đánh giá gần nhất từ hệ thống
+          </p>
+        </div>
+        <div className="rounded-2xl bg-amber-50 px-3 py-2 text-right">
+          <div className="text-base font-medium text-slate-950">
+            {communityAverage === null ? "-" : communityAverage.toFixed(1)}
+          </div>
+          <Stars value={Math.round(communityAverage ?? 0)} size="sm" />
+        </div>
+      </div>
+
+      <div className="max-h-[520px] overflow-y-auto rounded-2xl border border-slate-200 bg-white">
+        {reviews.length === 0 ? (
+          <div className="p-5">
+            <EmptyState title="Chưa có đánh giá">
+              Khi thành viên đánh giá sau giao dịch hoàn tất, dữ liệu sẽ xuất hiện tại đây.
+            </EmptyState>
+          </div>
+        ) : (
+          reviews.map((review) => (
+            <ReviewRow key={review.review_id} review={review} />
+          ))
+        )}
+      </div>
+    </Card>
+  );
+}
+
+function ReviewRow({ review }: { review: Review }) {
+  return (
+    <article className="grid grid-cols-[48px_minmax(0,1fr)_auto] gap-3 border-b border-slate-100 p-4 last:border-b-0 max-sm:grid-cols-[44px_minmax(0,1fr)]">
+      <Avatar name={review.reviewer_full_name ?? "Người dùng"} />
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            href={`/app/users/${review.reviewer_user_id}`}
+            className="text-sm font-medium text-slate-950 transition-colors hover:text-blue-700"
+          >
+            {review.reviewer_full_name ?? "Người đánh giá"}
+          </Link>
+          <Link
+            href={`/app/users/${review.reviewee_user_id}`}
+            className="inline-flex rounded-full border border-blue-100 bg-blue-50 px-3 py-1.5 text-sm font-medium text-slate-800 transition-colors hover:border-blue-200 hover:bg-blue-100"
+          >
+            Đánh giá cho {review.reviewee_full_name ?? `người dùng #${review.reviewee_user_id}`}
+          </Link>
+        </div>
+        <p className="mt-1 text-sm text-slate-500">
+          {review.book_title ?? `Giao dịch #${review.transaction_id}`}
+          {review.book_author ? ` - ${review.book_author}` : ""}
+        </p>
+        <p className="mt-3 text-sm leading-6 text-slate-700">{review.review_content || "Không có nội dung đánh giá."}</p>
+      </div>
+      <div className="text-right max-sm:col-span-2 max-sm:text-left">
+        <Stars value={review.rating_score} />
+        <p className="mt-2 text-sm text-slate-400">{formatDate(review.created_at)}</p>
+      </div>
+    </article>
+  );
+}
+
+function ReviewableList({
+  transactions,
+  currentUserId
+}: {
+  transactions: Transaction[];
+  currentUserId?: number;
+}) {
+  return (
+    <Card className="p-5">
+      <h2 className="text-base font-medium text-slate-950">Chờ bạn đánh giá</h2>
+      <p className="mt-1 text-sm text-slate-500">{transactions.length} giao dịch đã hoàn tất</p>
+      <div className="mt-4 space-y-3">
+        {transactions.length === 0 ? (
+          <EmptyState title="Không còn giao dịch chờ đánh giá" />
+        ) : (
+          transactions.slice(0, 4).map((tx) => (
+            <div key={tx.transaction_id} className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3">
+              <div className="flex h-11 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-700">
+                <BookOpen className="h-5 w-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-medium text-slate-950">{tx.book_title ?? `Sách #${tx.book_id}`}</div>
+                <p className="truncate text-sm text-slate-500">{transactionPartnerLabel(tx, currentUserId)}</p>
+              </div>
+              <Badge value={tx.transaction_type} />
+            </div>
+          ))
+        )}
+      </div>
+    </Card>
   );
 }
 
 function MetricCard({
   title,
   value,
+  suffix,
   detail,
   icon: Icon,
   tone,
-  chip
+  rating
 }: {
   title: string;
   value: string;
+  suffix?: string;
   detail: React.ReactNode;
   icon: typeof ShieldCheck;
-  tone: string;
-  chip?: string;
+  tone: "blue" | "amber" | "emerald" | "violet";
+  rating?: number;
 }) {
   return (
-    <Card className="flex items-center gap-4">
-      <div className={cn("flex h-16 w-16 flex-shrink-0 items-center justify-center rounded-full", toneBg(tone))}>
-        <Icon className={cn("h-8 w-8", toneText(tone))} />
+    <Card className="flex flex-col items-start gap-3 p-4 transition-all hover:-translate-y-1 hover:shadow-md">
+      <div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ring-1 ring-inset", toneBg(tone))}>
+        <Icon className="h-5 w-5" />
       </div>
-      <div className="min-w-0">
-        <div className="text-sm font-semibold text-slate-600">{title}</div>
-        <div className="mt-1 flex flex-wrap items-center gap-2">
-          <div className="text-2xl font-bold tracking-tight text-slate-950">{value}</div>
-          {chip ? <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-bold text-emerald-700">{chip}</span> : null}
+      <div className="min-w-0 w-full">
+        <div className="mt-1 text-2xl font-bold tracking-tight text-slate-950">
+          {value}
+          {suffix ? <span className="ml-0.5 text-sm font-medium text-slate-500">{suffix}</span> : null}
         </div>
-        <div className="mt-1 text-xs text-slate-500">{detail}</div>
+        <div className="text-xs font-semibold uppercase tracking-wide text-slate-400 mt-1">{title}</div>
+        <div className="mt-2 text-xs leading-5 text-slate-500 truncate">
+          {rating ? <Stars value={Math.round(rating)} size="sm" /> : detail}
+        </div>
       </div>
     </Card>
   );
@@ -368,61 +504,77 @@ function LeaderboardPanel({
   icon: Icon,
   items,
   empty,
-  initialLimit = 5
+  horizontal = false
 }: {
   title: string;
   icon: typeof Trophy;
-  items: Array<{ id: number; title: string; subtitle: string; metric: string; imageUrl?: string | null }>;
+  items: Array<{ id: number; title: string; subtitle?: string; metric: string; imageUrl?: string | null; href?: string }>;
   empty: string;
-  initialLimit?: number;
+  horizontal?: boolean;
 }) {
-  const [showAll, setShowAll] = useState(false);
-  const visibleItems = showAll ? items : items.slice(0, initialLimit);
-
   return (
-    <Card>
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <Icon className="h-5 w-5 text-blue-700" />
-          <h2 className="text-base font-bold text-slate-900">{title}</h2>
+    <Card className="p-5">
+      <div className="mb-4 flex items-center gap-3">
+        <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-blue-50 text-blue-700">
+          <Icon className="h-5 w-5" />
         </div>
-        {items.length > initialLimit ? (
-          <button
-            className="text-xs font-bold text-blue-700 transition-colors hover:text-blue-900"
-            type="button"
-            onClick={() => setShowAll((current) => !current)}
-          >
-            {showAll ? "Thu gọn" : "Xem tất cả"}
-          </button>
-        ) : null}
+        <h2 className="text-base font-medium text-slate-950">{title}</h2>
       </div>
       {items.length === 0 ? (
         <EmptyState title={empty} />
       ) : (
-        <div className="space-y-3">
-          {visibleItems.map((item, index) => (
-            <div key={item.id} className="flex items-center gap-3 border-b border-slate-100 pb-3 last:border-b-0 last:pb-0">
-              {item.imageUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={item.imageUrl} alt={item.title} className="h-12 w-10 rounded-lg object-cover" />
-              ) : (
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-xs font-bold text-slate-600">
-                  {index + 1}
-                </div>
-              )}
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-bold text-slate-900">{item.title}</div>
-                <div className="truncate text-xs text-slate-500">{item.subtitle}</div>
-              </div>
-              <div className="whitespace-nowrap rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
-                {item.metric}
-              </div>
-            </div>
+        <div className={cn(horizontal ? "grid grid-cols-4 gap-3 max-xl:grid-cols-2 max-sm:grid-cols-1" : "space-y-3")}>
+          {items.slice(0, horizontal ? 8 : 5).map((item, index) => (
+            <LeaderboardItem key={`${item.href ?? item.id}-${index}`} item={item} rank={index + 1} />
           ))}
         </div>
       )}
     </Card>
   );
+}
+
+function LeaderboardItem({
+  item,
+  rank
+}: {
+  item: { id: number; title: string; subtitle?: string; metric: string; imageUrl?: string | null; href?: string };
+  rank: number;
+}) {
+  const content = (
+    <>
+      {item.imageUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={item.imageUrl} alt={item.title} className="h-12 w-10 shrink-0 rounded-xl object-cover" />
+      ) : (
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-slate-50 text-sm font-medium text-slate-600 ring-1 ring-inset ring-slate-200">
+          {rank}
+        </div>
+      )}
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm font-medium text-slate-950">{item.title}</div>
+        {item.subtitle ? <div className="truncate text-sm text-slate-500">{item.subtitle}</div> : null}
+      </div>
+      <div className="flex shrink-0 items-center gap-2">
+        <div className="whitespace-nowrap rounded-full bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-700">
+          {item.metric}
+        </div>
+        {item.href ? <ArrowRight className="h-4 w-4 text-slate-300 transition-colors group-hover:text-blue-600" /> : null}
+      </div>
+    </>
+  );
+
+  if (item.href) {
+    return (
+      <Link
+        href={item.href}
+        className="group flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3 transition-colors hover:border-blue-200 hover:bg-blue-50/45"
+      >
+        {content}
+      </Link>
+    );
+  }
+
+  return <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3">{content}</div>;
 }
 
 function Stars({ value, size = "md" }: { value: number; size?: "sm" | "md" }) {
@@ -432,7 +584,7 @@ function Stars({ value, size = "md" }: { value: number; size?: "sm" | "md" }) {
         <Star
           key={item}
           className={cn(
-            size === "sm" ? "h-3.5 w-3.5" : "h-4 w-4",
+            size === "sm" ? "h-4 w-4" : "h-5 w-5",
             item <= value ? "fill-amber-400 text-amber-400" : "text-slate-300"
           )}
         />
@@ -441,47 +593,49 @@ function Stars({ value, size = "md" }: { value: number; size?: "sm" | "md" }) {
   );
 }
 
-function Avatar({ name, index }: { name: string; index: number }) {
+function Avatar({ name }: { name: string }) {
   const colors = ["bg-rose-100 text-rose-700", "bg-blue-100 text-blue-700", "bg-emerald-100 text-emerald-700", "bg-amber-100 text-amber-700"];
+  const color = colors[stableNameIndex(name, colors.length)];
   return (
-    <div className={cn("flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full text-sm font-bold", colors[index % colors.length])}>
+    <div className={cn("flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-sm font-medium", color)}>
       {name.slice(0, 1).toUpperCase()}
     </div>
   );
 }
 
+function stableNameIndex(name: string, length: number) {
+  const normalized = name.trim().toLocaleLowerCase("vi-VN");
+  let hash = 0;
+  for (let index = 0; index < normalized.length; index += 1) {
+    hash = (hash * 31 + normalized.charCodeAt(index)) % length;
+  }
+  return hash;
+}
+
 function toneBg(tone: string) {
   const tones: Record<string, string> = {
-    blue: "bg-blue-50",
-    amber: "bg-amber-50",
-    emerald: "bg-emerald-50",
-    violet: "bg-violet-50"
+    blue: "bg-blue-50 text-blue-700 ring-blue-100",
+    amber: "bg-amber-50 text-amber-600 ring-amber-100",
+    emerald: "bg-emerald-50 text-emerald-700 ring-emerald-100",
+    violet: "bg-violet-50 text-violet-700 ring-violet-100"
   };
   return tones[tone] ?? tones.blue;
 }
 
-function toneText(tone: string) {
-  const tones: Record<string, string> = {
-    blue: "text-blue-700",
-    amber: "text-amber-500",
-    emerald: "text-emerald-600",
-    violet: "text-violet-600"
-  };
-  return tones[tone] ?? tones.blue;
+function reviewKey(transactionId: number, revieweeId: number, type: ReviewType) {
+  return `${transactionId}:${revieweeId}:${type}`;
 }
 
-function transactionLabel(transaction: Transaction | null, currentUserId?: number) {
-  if (!transaction) return "Giao dịch không xác định";
+function transactionLabel(transaction: Transaction, currentUserId?: number) {
   const book = transaction.book_title ?? `Sách #${transaction.book_id}`;
-  const author = transaction.book_author ? ` - ${transaction.book_author}` : "";
   const partner = transactionPartnerName(transaction, currentUserId);
-  return `Giao dịch #${transaction.transaction_id} - ${book}${author}${partner ? ` - với ${partner}` : ""}`;
+  return `${book}${partner ? ` - với ${partner}` : ""}`;
 }
 
 function transactionPartnerLabel(transaction: Transaction, currentUserId?: number) {
   const partner = transactionPartnerName(transaction, currentUserId);
   if (!partner) return `Giao dịch #${transaction.transaction_id}`;
-  return `Giao dịch #${transaction.transaction_id} với ${partner}`;
+  return `Với ${partner}`;
 }
 
 function transactionPartnerName(transaction: Transaction, currentUserId?: number) {

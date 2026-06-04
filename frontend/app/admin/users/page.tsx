@@ -5,11 +5,9 @@ import { adminApi } from "@/lib/api";
 import { errorMessage } from "@/lib/api/client";
 import type { AdminUser } from "@/lib/api/types";
 import { useAuth } from "@/lib/auth";
-import { Alert, Badge, Button, ConfirmButton, Field, TextInput, PageHeader, Select } from "@/components/ui";
+import { Alert, Badge, Button, ConfirmButton, Field, TextInput, PageHeader } from "@/components/ui";
 import { FormEvent } from "react";
 import { AlertTriangle, X, Users } from "lucide-react";
-
-const PAGE_SIZE = 50;
 
 export default function AdminUsersPage() {
   const { token, user } = useAuth();
@@ -18,21 +16,11 @@ export default function AdminUsersPage() {
   const [adjustingUser, setAdjustingUser] = useState<AdminUser | null>(null);
   const [adjustError, setAdjustError] = useState("");
   const [adjustSuccess, setAdjustSuccess] = useState("");
-  const [query, setQuery] = useState("");
-  const [role, setRole] = useState("");
-  const [accountStatus, setAccountStatus] = useState("");
-  const [page, setPage] = useState(0);
 
   async function load() {
     if (!token || user?.role !== "ADMIN") return;
     try {
-      setUsers(await adminApi.users(token, {
-        q: query.trim(),
-        role,
-        account_status: accountStatus,
-        limit: PAGE_SIZE,
-        offset: page * PAGE_SIZE
-      }));
+      setUsers(await adminApi.users(token));
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -40,7 +28,7 @@ export default function AdminUsersPage() {
 
   useEffect(() => {
     void load();
-  }, [token, user?.role, query, role, accountStatus, page]);
+  }, [token, user?.role]);
 
   if (user?.role !== "ADMIN") return null;
 
@@ -59,23 +47,13 @@ export default function AdminUsersPage() {
     if (!adjustingUser || !token) return;
     const form = event.target as HTMLFormElement;
     const data = new FormData(form);
-    const pointChange = Number(data.get("point_change"));
-    const reason = String(data.get("reason") ?? "").trim();
-    if (!Number.isFinite(pointChange) || pointChange === 0) {
-      setAdjustError("Điểm thay đổi phải khác 0.");
-      return;
-    }
-    if (!reason) {
-      setAdjustError("Lý do điều chỉnh không được để trống.");
-      return;
-    }
     
     try {
       setAdjustError("");
       setAdjustSuccess("");
       await adminApi.adjustPoints(token, adjustingUser.user_id, {
-        point_change: pointChange,
-        reason
+        point_change: Number(data.get("point_change")),
+        reason: String(data.get("reason"))
       });
       setAdjustSuccess(`Đã cập nhật điểm cho ${adjustingUser.full_name} thành công.`);
       form.reset();
@@ -105,59 +83,6 @@ export default function AdminUsersPage() {
       />
 
       {error ? <Alert variant="error">{error}</Alert> : null}
-
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="grid grid-cols-[minmax(220px,1fr)_180px_180px_auto] gap-3 max-lg:grid-cols-2 max-sm:grid-cols-1">
-          <TextInput
-            value={query}
-            onChange={(event) => {
-              setPage(0);
-              setQuery(event.target.value);
-            }}
-            placeholder="Tìm theo tên, email hoặc số điện thoại"
-          />
-          <Select
-            value={role}
-            onChange={(event) => {
-              setPage(0);
-              setRole(event.target.value);
-            }}
-            aria-label="Lọc vai trò"
-          >
-            <option value="">Tất cả vai trò</option>
-            <option value="USER">Người dùng</option>
-            <option value="MEMBER">Thành viên</option>
-            <option value="COURIER">Courier</option>
-            <option value="ADMIN">Admin</option>
-          </Select>
-          <Select
-            value={accountStatus}
-            onChange={(event) => {
-              setPage(0);
-              setAccountStatus(event.target.value);
-            }}
-            aria-label="Lọc trạng thái"
-          >
-            <option value="">Tất cả trạng thái</option>
-            <option value="PENDING">Chờ xử lý</option>
-            <option value="ACTIVE">Đang hoạt động</option>
-            <option value="LOCKED">Đã khóa</option>
-            <option value="INACTIVE">Không hoạt động</option>
-          </Select>
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={() => {
-              setQuery("");
-              setRole("");
-              setAccountStatus("");
-              setPage(0);
-            }}
-          >
-            Xóa lọc
-          </Button>
-        </div>
-      </section>
 
       <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden flex flex-col h-[600px]">
         <div className="flex-1 overflow-auto p-0">
@@ -216,20 +141,6 @@ export default function AdminUsersPage() {
               )}
             </tbody>
           </table>
-        </div>
-      </div>
-
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-sm font-medium text-slate-500">
-          Trang {page + 1} · Hiển thị tối đa {PAGE_SIZE} người dùng
-        </p>
-        <div className="flex gap-2">
-          <Button type="button" variant="secondary" disabled={page === 0} onClick={() => setPage((value) => Math.max(0, value - 1))}>
-            Trước
-          </Button>
-          <Button type="button" variant="secondary" disabled={users.length < PAGE_SIZE} onClick={() => setPage((value) => value + 1)}>
-            Sau
-          </Button>
         </div>
       </div>
 

@@ -58,3 +58,24 @@ def upload_book_cover(content: bytes, content_type: str, original_filename: str)
         raise StorageError("Could not upload cover image to MinIO.") from error
 
     return f"{public_endpoint}/{settings.minio_bucket_book_covers}/{object_name}"
+
+
+def check_storage_ready() -> None:
+    try:
+        from minio import Minio
+        from minio.error import S3Error
+    except ImportError as error:
+        raise StorageError("MinIO client dependency is not installed.") from error
+
+    endpoint = settings.minio_endpoint.removeprefix("http://").removeprefix("https://")
+    secure = settings.minio_endpoint.startswith("https://")
+    client = Minio(
+        endpoint,
+        access_key=settings.minio_root_user,
+        secret_key=settings.minio_root_password,
+        secure=secure,
+    )
+    try:
+        client.bucket_exists(settings.minio_bucket_book_covers)
+    except S3Error as error:
+        raise StorageError("Could not connect to MinIO.") from error

@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -78,11 +79,15 @@ def auth_headers(client: TestClient, email: str, phone: str, student_code: str) 
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
 
 
-def register_courier(client: TestClient, headers: dict[str, str]) -> None:
+def register_courier(
+    client: TestClient,
+    headers: dict[str, str],
+    delivery_area: str = "Ha Noi",
+) -> None:
     response = client.post(
         "/api/v1/users/me/courier-profile",
         json={
-            "delivery_area": "Ha Noi",
+            "delivery_area": delivery_area,
             "contact_name": "Courier User",
             "contact_phone": "0911111111",
             "contact_address": "Ha Noi",
@@ -132,7 +137,7 @@ def create_free_courier_transaction(
             "book_id": book["book_id"],
             "transaction_type": "PERMANENT_EXCHANGE",
             "delivery_method": "FREE_COURIER",
-            "receiver_address": "GD4, UET",
+            "receiver_address": "Phố Kiều Mai, phường Bắc Từ Liêm, Hà Nội",
             "receiver_lat": 21.0388,
             "receiver_lng": 105.784,
         },
@@ -143,7 +148,7 @@ def create_free_courier_transaction(
     accept_response = client.post(
         f"/api/v1/transactions/{transaction['transaction_id']}/accept",
         json={
-            "pickup_address": "GD3, UET",
+            "pickup_address": "Số 8a, Tôn Thất Thuyết, Cầu Giấy, Hà Nội",
             "pickup_lat": 21.0379,
             "pickup_lng": 105.7823,
         },
@@ -159,16 +164,36 @@ def accept_delivery(
     courier_headers: dict[str, str],
     transaction_id: int,
 ) -> dict:
+    expected_delivery_at = datetime.now(UTC) + timedelta(days=1)
     response = client.post(
         f"/api/v1/deliveries/transactions/{transaction_id}/accept",
         json={
-            "expected_delivery_at": "2026-06-02T09:00:00Z",
+            "expected_delivery_at": expected_delivery_at.isoformat(),
         },
         headers=courier_headers,
     )
     assert response.status_code == 201
     assert response.json()["expected_delivery_at"] is not None
     return response.json()
+
+
+def confirm_exchange_for_delivery(
+    client: TestClient,
+    owner_headers: dict[str, str],
+    requester_headers: dict[str, str],
+    transaction_id: int,
+) -> None:
+    owner_confirm = client.post(
+        f"/api/v1/transactions/{transaction_id}/confirm",
+        headers=owner_headers,
+    )
+    requester_confirm = client.post(
+        f"/api/v1/transactions/{transaction_id}/confirm",
+        headers=requester_headers,
+    )
+    assert owner_confirm.status_code == 200
+    assert requester_confirm.status_code == 200
+    assert requester_confirm.json()["transaction_status"] == "DELIVERING"
 
 
 def test_courier_accept_pickup_deliver_settles_reward_and_completes_transaction(
@@ -180,17 +205,12 @@ def test_courier_accept_pickup_deliver_settles_reward_and_completes_transaction(
     register_courier(client, courier_headers)
     transaction = create_free_courier_transaction(client, owner_headers, requester_headers)
 
-    owner_confirm = client.post(
-        f"/api/v1/transactions/{transaction['transaction_id']}/confirm",
-        headers=owner_headers,
+    confirm_exchange_for_delivery(
+        client,
+        owner_headers,
+        requester_headers,
+        transaction["transaction_id"],
     )
-    requester_confirm = client.post(
-        f"/api/v1/transactions/{transaction['transaction_id']}/confirm",
-        headers=requester_headers,
-    )
-    assert owner_confirm.status_code == 200
-    assert requester_confirm.status_code == 200
-    assert requester_confirm.json()["transaction_status"] == "DELIVERING"
 
     available_response = client.get("/api/v1/deliveries/available", headers=courier_headers)
     assert available_response.status_code == 200
@@ -203,8 +223,8 @@ def test_courier_accept_pickup_deliver_settles_reward_and_completes_transaction(
     assert delivery["book_id"] == transaction["book_id"]
     assert delivery["owner_id"] == transaction["owner_id"]
     assert delivery["requester_id"] == transaction["requester_id"]
-    assert delivery["pickup_address"] == "GD3, UET"
-    assert delivery["receiver_address"] == "GD4, UET"
+    assert delivery["pickup_address"] == "Số 8a, Tôn Thất Thuyết, Cầu Giấy, Hà Nội"
+    assert delivery["receiver_address"] == "Phố Kiều Mai, phường Bắc Từ Liêm, Hà Nội"
     me_response = client.get("/api/v1/users/me", headers=courier_headers)
     assert me_response.json()["courier_profile"]["courier_status"] == "BUSY"
 
@@ -244,6 +264,12 @@ def test_delivery_requires_courier_profile_and_only_assigned_courier_updates(
     register_courier(client, courier_headers)
     register_courier(client, other_courier_headers)
     transaction = create_free_courier_transaction(client, owner_headers, requester_headers)
+    confirm_exchange_for_delivery(
+        client,
+        owner_headers,
+        requester_headers,
+        transaction["transaction_id"],
+    )
 
     member_available_response = client.get("/api/v1/deliveries/available", headers=requester_headers)
     assert member_available_response.status_code == 403
@@ -254,6 +280,152 @@ def test_delivery_requires_courier_profile_and_only_assigned_courier_updates(
         headers=other_courier_headers,
     )
     assert forbidden_response.status_code == 403
+
+
+def test_courier_expected_delivery_date_must_be_within_three_days(
+    client: TestClient,
+) -> None:
+    owner_headers = auth_headers(client, "owner@example.com", "0900000001", "SV101")
+    requester_headers = auth_headers(client, "requester@example.com", "0900000002", "SV102")
+    courier_headers = auth_headers(client, "courier@example.com", "0900000003", "SV103")
+    register_courier(client, courier_headers)
+    transaction = create_free_courier_transaction(client, owner_headers, requester_headers)
+    confirm_exchange_for_delivery(
+        client,
+        owner_headers,
+        requester_headers,
+        transaction["transaction_id"],
+    )
+
+    too_late = datetime.now(UTC) + timedelta(days=3, minutes=1)
+    response = client.post(
+        f"/api/v1/deliveries/transactions/{transaction['transaction_id']}/accept",
+        json={"expected_delivery_at": too_late.isoformat()},
+        headers=courier_headers,
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "Expected delivery time must be within 3 days after accepting the task."
+    )
+
+
+def test_exchange_delivery_task_opens_after_both_participants_confirm(
+    client: TestClient,
+) -> None:
+    owner_headers = auth_headers(client, "owner@example.com", "0900000001", "SV101")
+    requester_headers = auth_headers(client, "requester@example.com", "0900000002", "SV102")
+    courier_headers = auth_headers(client, "courier@example.com", "0900000003", "SV103")
+    register_courier(client, courier_headers)
+    transaction = create_free_courier_transaction(client, owner_headers, requester_headers)
+
+    available_before_confirm = client.get("/api/v1/deliveries/available", headers=courier_headers)
+    assert available_before_confirm.status_code == 200
+    assert available_before_confirm.json() == []
+
+    premature_accept = client.post(
+        f"/api/v1/deliveries/transactions/{transaction['transaction_id']}/accept",
+        json={"expected_delivery_at": (datetime.now(UTC) + timedelta(days=1)).isoformat()},
+        headers=courier_headers,
+    )
+    assert premature_accept.status_code == 404
+
+    confirm_exchange_for_delivery(
+        client,
+        owner_headers,
+        requester_headers,
+        transaction["transaction_id"],
+    )
+    available_after_confirm = client.get("/api/v1/deliveries/available", headers=courier_headers)
+    assert available_after_confirm.status_code == 200
+    assert [task["transaction_id"] for task in available_after_confirm.json()] == [
+        transaction["transaction_id"]
+    ]
+
+
+def test_delivery_tasks_match_courier_selected_campus_areas(client: TestClient) -> None:
+    owner_headers = auth_headers(client, "owner@example.com", "0900000001", "SV101")
+    requester_headers = auth_headers(client, "requester@example.com", "0900000002", "SV102")
+    compatible_courier_headers = auth_headers(client, "courier@example.com", "0900000003", "SV103")
+    incompatible_courier_headers = auth_headers(client, "other@example.com", "0900000004", "SV104")
+    register_courier(
+        client,
+        compatible_courier_headers,
+        "Khu GĐ3, Khu GĐ4",
+    )
+    register_courier(client, incompatible_courier_headers, "Sảnh E3 UET")
+    book = create_book(client, owner_headers)
+
+    create_response = client.post(
+        "/api/v1/transactions",
+        json={
+            "book_id": book["book_id"],
+            "transaction_type": "PERMANENT_EXCHANGE",
+            "delivery_method": "FREE_COURIER",
+            "receiver_address": "Phố Kiều Mai, phường Bắc Từ Liêm, Hà Nội",
+            "receiver_lat": 21.03649,
+            "receiver_lng": 105.78476,
+        },
+        headers=requester_headers,
+    )
+    assert create_response.status_code == 201
+    transaction = create_response.json()
+    accept_response = client.post(
+        f"/api/v1/transactions/{transaction['transaction_id']}/accept",
+        json={
+            "pickup_address": "Số 8a, Tôn Thất Thuyết, Cầu Giấy, Hà Nội",
+            "pickup_lat": 21.03696,
+            "pickup_lng": 105.78333,
+        },
+        headers=owner_headers,
+    )
+    assert accept_response.status_code == 200
+    confirm_exchange_for_delivery(
+        client,
+        owner_headers,
+        requester_headers,
+        transaction["transaction_id"],
+    )
+
+    compatible_response = client.get("/api/v1/deliveries/available", headers=compatible_courier_headers)
+    assert compatible_response.status_code == 200
+    assert [task["transaction_id"] for task in compatible_response.json()] == [
+        transaction["transaction_id"]
+    ]
+
+    incompatible_response = client.get("/api/v1/deliveries/available", headers=incompatible_courier_headers)
+    assert incompatible_response.status_code == 200
+    assert incompatible_response.json() == []
+    accept_incompatible_response = client.post(
+        f"/api/v1/deliveries/transactions/{transaction['transaction_id']}/accept",
+        json={"expected_delivery_at": (datetime.now(UTC) + timedelta(days=1)).isoformat()},
+        headers=incompatible_courier_headers,
+    )
+    assert accept_incompatible_response.status_code == 404
+
+
+def test_free_courier_rejects_unconfigured_campus_handoff_point(client: TestClient) -> None:
+    owner_headers = auth_headers(client, "owner@example.com", "0900000001", "SV101")
+    requester_headers = auth_headers(client, "requester@example.com", "0900000002", "SV102")
+    book = create_book(client, owner_headers)
+
+    response = client.post(
+        "/api/v1/transactions",
+        json={
+            "book_id": book["book_id"],
+            "transaction_type": "PERMANENT_EXCHANGE",
+            "delivery_method": "FREE_COURIER",
+            "receiver_address": "Unconfigured campus spot",
+            "receiver_lat": 21.0408,
+            "receiver_lng": 105.789,
+        },
+        headers=requester_headers,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "Free courier only supports configured campus handoff points near UET."
+    )
 
 
 def test_pending_and_rejected_courier_cannot_take_delivery_tasks(client: TestClient) -> None:
@@ -290,6 +462,12 @@ def test_failed_delivery_cancels_transaction_releases_book_and_no_reward(
     courier_headers = auth_headers(client, "courier@example.com", "0900000003", "SV103")
     register_courier(client, courier_headers)
     transaction = create_free_courier_transaction(client, owner_headers, requester_headers)
+    confirm_exchange_for_delivery(
+        client,
+        owner_headers,
+        requester_headers,
+        transaction["transaction_id"],
+    )
     delivery = accept_delivery(client, courier_headers, transaction["transaction_id"])
 
     failed_response = client.post(
@@ -304,3 +482,68 @@ def test_failed_delivery_cancels_transaction_releases_book_and_no_reward(
     assert transactions[0]["transaction_status"] == "CANCELLED"
     books = client.get("/api/v1/books?mine=true", headers=owner_headers).json()
     assert books[0]["book_status"] == "AVAILABLE"
+
+
+def test_free_courier_borrow_charges_on_receipt_not_owner_return_confirmation(
+    client: TestClient,
+) -> None:
+    owner_headers = auth_headers(client, "owner@example.com", "0900000001", "SV101")
+    requester_headers = auth_headers(client, "requester@example.com", "0900000002", "SV102")
+    courier_headers = auth_headers(client, "courier@example.com", "0900000003", "SV103")
+    register_courier(client, courier_headers)
+    book = create_book(client, owner_headers)
+    create_response = client.post(
+        "/api/v1/transactions",
+        json={
+            "book_id": book["book_id"],
+            "transaction_type": "BORROW_RETURN",
+            "delivery_method": "FREE_COURIER",
+            "borrow_duration_days": 7,
+            "receiver_address": "Phố Kiều Mai, phường Bắc Từ Liêm, Hà Nội",
+            "receiver_lat": 21.0388,
+            "receiver_lng": 105.784,
+        },
+        headers=requester_headers,
+    )
+    assert create_response.status_code == 201
+    transaction = create_response.json()
+    accept_response = client.post(
+        f"/api/v1/transactions/{transaction['transaction_id']}/accept",
+        json={
+            "pickup_address": "Số 8a, Tôn Thất Thuyết, Cầu Giấy, Hà Nội",
+            "pickup_lat": 21.0379,
+            "pickup_lng": 105.7823,
+        },
+        headers=owner_headers,
+    )
+    assert accept_response.status_code == 200
+    delivery = accept_delivery(client, courier_headers, transaction["transaction_id"])
+    client.post(f"/api/v1/deliveries/{delivery['delivery_id']}/pickup", headers=courier_headers)
+    delivered_response = client.post(
+        f"/api/v1/deliveries/{delivery['delivery_id']}/delivered",
+        headers=courier_headers,
+    )
+    assert delivered_response.status_code == 200
+
+    receipt_response = client.post(
+        f"/api/v1/transactions/{transaction['transaction_id']}/confirm-receipt",
+        headers=requester_headers,
+    )
+    assert receipt_response.status_code == 200
+    assert receipt_response.json()["transaction_status"] == "BORROWING"
+    assert client.get("/api/v1/points/me", headers=owner_headers).json()["current_points"] == 25
+    assert client.get("/api/v1/points/me", headers=requester_headers).json()["current_points"] == 15
+    assert client.get("/api/v1/points/me", headers=courier_headers).json()["current_points"] == 22
+
+    client.post(
+        f"/api/v1/transactions/{transaction['transaction_id']}/return",
+        headers=requester_headers,
+    )
+    confirm_return_response = client.post(
+        f"/api/v1/transactions/{transaction['transaction_id']}/confirm-return",
+        headers=owner_headers,
+    )
+    assert confirm_return_response.status_code == 200
+    assert confirm_return_response.json()["transaction_status"] == "COMPLETED"
+    assert client.get("/api/v1/points/me", headers=owner_headers).json()["current_points"] == 25
+    assert client.get("/api/v1/points/me", headers=requester_headers).json()["current_points"] == 15

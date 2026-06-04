@@ -73,7 +73,7 @@ export default function AdminReviewsPage() {
             </div>
 
             <div className="flex-1">
-              <p className="text-slate-700 italic text-sm">&ldquo;{review.review_content || "Không có nội dung đánh giá"}&rdquo;</p>
+              <p className="text-slate-700 italic text-sm">"{review.review_content || "Không có nội dung đánh giá"}"</p>
             </div>
 
             <div className="mt-6 flex items-center justify-between rounded-xl bg-slate-50 p-3 text-sm border border-slate-100">

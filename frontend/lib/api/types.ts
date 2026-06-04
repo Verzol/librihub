@@ -134,6 +134,7 @@ export type CategorySummary = {
 export type Book = {
   book_id: number;
   owner_id: number;
+  owner_full_name: string | null;
   category_id: number;
   title: string;
   author: string;
@@ -168,6 +169,12 @@ export type Transaction = {
   owner_full_name: string | null;
   requester_id: number;
   requester_full_name: string | null;
+  pickup_address: string | null;
+  receiver_address: string | null;
+  pickup_lat: number | null;
+  pickup_lng: number | null;
+  receiver_lat: number | null;
+  receiver_lng: number | null;
   transaction_type: TransactionType;
   delivery_method: DeliveryMethod;
   transaction_status: TransactionStatus;
