@@ -4,7 +4,12 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.models.enums import AccountStatus, ActivityType, BookStatus, CourierStatus, TransactionStatus, UserRole
 from app.models.erd import ActivityLog, Book, Category, CourierProfile, Transaction, User
-from app.modules.books.schemas import BookCreateRequest, BookUpdateRequest, CategoryCreateRequest
+from app.modules.books.schemas import (
+    BookCreateRequest,
+    BookUpdateRequest,
+    CategoryCreateRequest,
+    CategoryUpdateRequest,
+)
 
 
 class CategoryNotFoundError(Exception):
@@ -109,6 +114,48 @@ def create_category(db: Session, current_user: User, payload: CategoryCreateRequ
     except IntegrityError as error:
         db.rollback()
         raise DuplicateCategoryError from error
+    db.refresh(category)
+    return category
+
+
+def update_category(
+    db: Session,
+    current_user: User,
+    category_id: int,
+    payload: CategoryUpdateRequest,
+) -> Category:
+    if current_user.role != UserRole.ADMIN:
+        raise AdminRequiredError
+    category = db.scalar(select(Category).where(Category.category_id == category_id).with_for_update())
+    if category is None:
+        raise CategoryNotFoundError
+
+    updates = payload.model_dump(exclude_unset=True)
+    for field, value in updates.items():
+        setattr(category, field, value)
+    try:
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        raise DuplicateCategoryError from error
+    db.refresh(category)
+    return category
+
+
+def set_category_active(
+    db: Session,
+    current_user: User,
+    category_id: int,
+    *,
+    is_active: bool,
+) -> Category:
+    if current_user.role != UserRole.ADMIN:
+        raise AdminRequiredError
+    category = db.scalar(select(Category).where(Category.category_id == category_id).with_for_update())
+    if category is None:
+        raise CategoryNotFoundError
+    category.is_active = is_active
+    db.commit()
     db.refresh(category)
     return category
 
