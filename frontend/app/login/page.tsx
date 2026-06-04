@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { FormEvent, Suspense, useState } from "react";
 import { ArrowLeft, ArrowRight, BookOpen, Coins, ShieldCheck, Sparkles, Truck, Users } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { errorMessage } from "@/lib/api/client";
@@ -14,11 +14,13 @@ const highlights = [
   { icon: Coins, title: "Điểm thưởng minh bạch", text: "Mỗi giao dịch đều đi qua ledger để điểm số luôn rõ ràng." }
 ];
 
-export default function LoginPage() {
+function LoginContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { login } = useAuth();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const returnTo = searchParams.get("returnTo");
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -26,8 +28,12 @@ export default function LoginPage() {
     const data = new FormData(event.currentTarget);
     try {
       setLoading(true);
-      await login({ login: String(data.get("login") ?? ""), password: String(data.get("password") ?? "") });
-      router.replace("/app/books");
+      const currentUser = await login({ login: String(data.get("login") ?? ""), password: String(data.get("password") ?? "") });
+      if (currentUser.role === "ADMIN") {
+        router.replace(returnTo || "/admin");
+      } else {
+        router.replace(returnTo?.startsWith("/admin") ? "/app/books" : returnTo || "/app/books");
+      }
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -151,5 +157,13 @@ export default function LoginPage() {
         </section>
       </div>
     </main>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<main className="min-h-screen bg-[#f3f7fc]" />}>
+      <LoginContent />
+    </Suspense>
   );
 }

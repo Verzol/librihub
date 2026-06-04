@@ -209,12 +209,47 @@ export function Card({ className, children }: { className?: string; children: Re
 export function PageHeader({
   title,
   description,
-  actions
+  actions,
+  hero,
+  heroIcon,
+  heroStat
 }: {
   title: string;
   description?: string;
   actions?: React.ReactNode;
+  hero?: boolean;
+  heroIcon?: React.ReactNode;
+  heroStat?: React.ReactNode;
 }) {
+  if (hero) {
+    return (
+      <section className="relative -mx-8 -mt-8 mb-8 overflow-hidden max-lg:-mx-5 max-sm:-mx-4">
+        <div className="absolute inset-0 bg-gradient-to-br from-blue-700 via-blue-600 to-indigo-700" />
+        <div className="absolute -right-12 -top-12 h-56 w-56 rounded-full bg-white/5" />
+        <div className="absolute -bottom-16 -left-8 h-64 w-64 rounded-full bg-white/5" />
+        <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-[#f0f4f9] to-transparent" />
+
+        <div className="relative px-8 pb-14 pt-9 max-lg:px-5 max-sm:px-4">
+          <div className="flex items-center justify-between gap-6 max-md:flex-col max-md:items-start">
+            <div>
+              <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1.5 text-sm font-semibold text-white shadow-sm">
+                {heroIcon}
+                {title}
+              </div>
+              {description ? <p className="mt-5 max-w-3xl text-base leading-7 text-blue-50/85">{description}</p> : null}
+            </div>
+            {heroStat ? (
+              <div className="w-60 rounded-2xl border border-white/20 bg-white/10 p-5 text-white shadow-[0_20px_50px_rgba(15,23,42,0.16)] backdrop-blur max-md:w-full">
+                {heroStat}
+              </div>
+            ) : null}
+          </div>
+          {actions ? <div className="mt-6 flex flex-wrap items-center gap-2">{actions}</div> : null}
+        </div>
+      </section>
+    );
+  }
+
   return (
     <div className="mb-6 flex items-center justify-between gap-4 max-md:flex-col max-md:items-start">
       <div>

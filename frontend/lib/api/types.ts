@@ -257,6 +257,51 @@ export type AdminBook = Pick<
   "book_id" | "owner_id" | "category_id" | "title" | "author" | "book_status" | "cover_image_url" | "created_at" | "updated_at"
 >;
 
+export type AdminTransaction = Pick<
+  Transaction,
+  | "transaction_id"
+  | "book_id"
+  | "book_title"
+  | "book_author"
+  | "owner_id"
+  | "owner_full_name"
+  | "requester_id"
+  | "requester_full_name"
+  | "transaction_type"
+  | "delivery_method"
+  | "transaction_status"
+  | "owner_confirmed"
+  | "requester_confirmed"
+  | "courier_confirmed"
+  | "requested_at"
+  | "completed_at"
+>;
+
+export type AdminDashboardMetricPoint = {
+  date: string;
+  total_users: number;
+  transactions_created: number;
+};
+
+export type AdminDashboardMetrics = {
+  total_users: number;
+  pending_courier_applications: number;
+  activity_log_count: number;
+  admin_action_count: number;
+  chart: AdminDashboardMetricPoint[];
+};
+
+export type AdminPointAdjustmentResponse = {
+  ledger_id: number;
+  user_id: number;
+  points_before: number;
+  point_change: number;
+  points_after: number;
+  role_in_transaction: string;
+  reason: string;
+  admin_action_id: number;
+};
+
 export type AdminLog = {
   activity_id?: number;
   admin_action_id?: number;
